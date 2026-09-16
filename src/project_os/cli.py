@@ -33,12 +33,16 @@ def main() -> None:
     run.add_argument("--profile", choices=["shan-yichun-splash"])
     run.add_argument("--dry-run", action="store_true", help="Store and score a candidate without modifying the source file.")
     run.add_argument("--verify-worktree", action="store_true", help="Build a candidate in an isolated Git worktree before allowing a commit.")
+    run.add_argument("--target-url", help="Deployed URL used only for opt-in runtime observations.")
+    run.add_argument("--runtime-tools", action="store_true", help="Collect Lighthouse and browser screenshot observations for --target-url.")
     history = subparsers.add_parser("history", help="Show commit/reject decisions.")
     history.add_argument("--db", type=Path, default=Path("demo_site/.project-os/project-os.db"))
     evolve = subparsers.add_parser("evolve-fansite-preview", help="Safely run multiple fansite improvements in a throwaway workspace.")
     evolve.add_argument("--site", required=True, type=Path)
     evolve.add_argument("--db", required=True, type=Path)
     evolve.add_argument("--cycles", type=int, default=3)
+    evolve.add_argument("--target-url", help="Deployed URL used only for opt-in runtime observations.")
+    evolve.add_argument("--runtime-tools", action="store_true", help="Collect runtime observations for --target-url.")
     research = subparsers.add_parser("research-news", help="Search, cross-check and stage a proposed news item.")
     research.add_argument("--site", required=True, type=Path, help="Any source file inside the target website project.")
     research.add_argument("--db", required=True, type=Path)
@@ -47,6 +51,9 @@ def main() -> None:
     research.add_argument("--draft-dir", required=True, type=Path)
     research.add_argument("--publish-to", type=Path, help="Website news directory; only used when verification succeeds.")
     args = parser.parse_args()
+
+    if getattr(args, "runtime_tools", False) and not args.target_url:
+        parser.error("--runtime-tools requires --target-url")
 
     if args.command == "init-demo":
         target = Path("demo_site/index.html")
@@ -69,7 +76,9 @@ def main() -> None:
             parser.error(f"Site source does not exist: {source}")
         db = Database(args.db)
         db.initialize()
-        preview = evolve_fansite_preview(source, db, cycles=args.cycles)
+        preview = evolve_fansite_preview(
+            source, db, cycles=args.cycles, target_url=args.target_url, enable_runtime_tools=args.runtime_tools,
+        )
         print(json.dumps({"initial": preview.initial, "final": preview.final, "steps": preview.steps}, ensure_ascii=False, indent=2))
         return
     if args.command == "research-news":
@@ -98,7 +107,7 @@ def main() -> None:
     db.initialize()
     if args.profile == "shan-yichun-splash":
         agent = EvolutionAgent(
-            db, evaluator=FansiteEvaluator(site.parents[2]), improver=FansiteImprover(), profile=SHAN_YICHUN_FANSITE,
+            db, evaluator=FansiteEvaluator(site.parents[2], target_url=args.target_url, enable_runtime_tools=args.runtime_tools), improver=FansiteImprover(), profile=SHAN_YICHUN_FANSITE,
             candidate_verifier=GitWorktreeBuildVerifier() if args.verify_worktree else None,
         )
     else:

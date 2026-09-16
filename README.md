@@ -122,7 +122,18 @@ python -m pip install -e ".[browser]"
 python -m playwright install chromium
 ```
 
-Runtime collection is deliberately opt-in. Configure a target URL and enable it only in a disposable or approved environment; the screenshot tool saves an artifact, while the Lighthouse tool records real performance-category scores. Neither tool substitutes for a visual model or human design review.
+If the Chromium download is blocked by a network policy, the screenshot tool automatically uses a locally installed Google Chrome when available. Set `PROJECT_OS_CHROME_EXECUTABLE` to choose a different Chrome executable.
+
+Runtime collection is deliberately opt-in. Configure a target URL and enable it only in a disposable or approved environment:
+
+```bash
+project-os evolve-fansite-preview \
+  --site /path/to/site/src/layouts/BaseLayout.astro \
+  --db .agent-data/site.db --cycles 1 \
+  --target-url https://example.com --runtime-tools
+```
+
+The screenshot tool saves an artifact, while the Lighthouse tool records real performance-category scores. Neither tool substitutes for a visual model or human design review.
 
 ## Development
 

@@ -8,6 +8,7 @@ into a score.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from dataclasses import asdict, dataclass
@@ -137,12 +138,21 @@ class LighthouseTool:
         if not target_url:
             return ToolReport(self.name, "unavailable", {}, limitations=("No target URL configured.",))
         output.parent.mkdir(parents=True, exist_ok=True)
-        command = ("npx", "--yes", "lighthouse", target_url, "--quiet", "--output=json", f"--output-path={output}")
-        result = subprocess.run(command, text=True, capture_output=True, check=False, timeout=180)
+        npx = "npx.cmd" if os.name == "nt" else "npx"
+        command = (npx, "--yes", "lighthouse", target_url, "--quiet", "--output=json", f"--output-path={output}")
+        try:
+            result = subprocess.run(command, text=True, capture_output=True, check=False, timeout=180)
+        except FileNotFoundError:
+            return ToolReport(self.name, "unavailable", {}, limitations=("Node.js/npx is not installed or is not on PATH.",))
+        except subprocess.TimeoutExpired:
+            return ToolReport(self.name, "failed", {}, limitations=("Lighthouse did not finish within 180 seconds.",))
         if result.returncode or not output.exists():
             detail = (result.stderr or result.stdout).strip()[-500:]
             return ToolReport(self.name, "failed", {}, limitations=(f"Lighthouse did not complete: {detail}",))
-        payload: dict[str, Any] = json.loads(output.read_text(encoding="utf-8"))
+        try:
+            payload: dict[str, Any] = json.loads(output.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            return ToolReport(self.name, "failed", {}, limitations=(f"Lighthouse report could not be parsed: {error}",))
         categories = payload.get("categories", {})
         metrics = {name: round(float(category.get("score", 0)) * 10, 2) for name, category in categories.items()}
         return ToolReport(self.name, "available", metrics)
@@ -150,6 +160,24 @@ class LighthouseTool:
 
 class PlaywrightScreenshotTool:
     name = "playwright-screenshot"
+
+    @staticmethod
+    def _browser_executable() -> str | None:
+        """Prefer a user-configured Chrome, then common Windows Chrome locations.
+
+        This makes the runtime evaluator useful when Playwright's own browser
+        download is unavailable on a restricted network.
+        """
+        configured = os.environ.get("PROJECT_OS_CHROME_EXECUTABLE")
+        candidates = [configured] if configured else []
+        candidates.extend(
+            [
+                r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+                r"C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+                str(Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "Application" / "chrome.exe"),
+            ]
+        )
+        return next((candidate for candidate in candidates if candidate and Path(candidate).is_file()), None)
 
     def collect(self, target_url: str | None, output: Path) -> ToolReport:
         if not target_url:
@@ -161,7 +189,8 @@ class PlaywrightScreenshotTool:
         try:
             output.parent.mkdir(parents=True, exist_ok=True)
             with sync_playwright() as playwright:
-                browser = playwright.chromium.launch()
+                executable = self._browser_executable()
+                browser = playwright.chromium.launch(executable_path=executable) if executable else playwright.chromium.launch()
                 page = browser.new_page(viewport={"width": 1440, "height": 1000})
                 page.goto(target_url, wait_until="networkidle", timeout=60_000)
                 page.screenshot(path=str(output), full_page=True)

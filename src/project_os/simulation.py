@@ -18,9 +18,18 @@ class EvolutionPreview:
     steps: list[dict[str, str]]
 
 
-def evolve_fansite_preview(source_path: Path, database: Database, *, cycles: int = 3) -> EvolutionPreview:
+def evolve_fansite_preview(
+    source_path: Path,
+    database: Database,
+    *,
+    cycles: int = 3,
+    target_url: str | None = None,
+    enable_runtime_tools: bool = False,
+) -> EvolutionPreview:
     """Iterate safely in a throwaway file while keeping the real target read-only."""
-    evaluator = FansiteEvaluator(source_path.parents[2])  # src/layouts/BaseLayout.astro -> project root
+    evaluator = FansiteEvaluator(
+        source_path.parents[2], target_url=target_url, enable_runtime_tools=enable_runtime_tools,
+    )  # src/layouts/BaseLayout.astro -> project root
     initial = evaluator.evaluate(source_path.read_text(encoding="utf-8")).as_dict()
     steps: list[dict[str, str]] = []
     with tempfile.TemporaryDirectory(prefix="project-os-") as folder:
