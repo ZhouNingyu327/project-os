@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Protocol
 
 from .evaluators import QualityReport
+from .site_tools import ToolReport
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,10 @@ class EvaluationContext:
     source: str
     project_root: Path
     brand_marker: str = ""
+    tool_reports: dict[str, ToolReport] | None = None
+
+    def tool(self, name: str) -> ToolReport | None:
+        return (self.tool_reports or {}).get(name)
 
 
 @dataclass(frozen=True)
@@ -39,35 +44,33 @@ class QualityAgent(Protocol):
 class CorrectnessAgent:
     name, dimension = "correctness-agent", "correctness"
     def assess(self, context: EvaluationContext) -> AgentAssessment:
-        return AgentAssessment(self.name, self.dimension, 10.0, 0.55, ())
+        markup = context.tool("markup-correctness")
+        if not markup or markup.status != "available":
+            return AgentAssessment(self.name, self.dimension, 10.0, 0.35, ())
+        missing = len(markup.findings)
+        findings = tuple({**finding, "dimension": "correctness"} for finding in markup.findings)
+        return AgentAssessment(self.name, self.dimension, 10.0 - missing * 1.0, 0.65, findings)
 
 
 class EvidenceAgent:
     name, dimension = "evidence-agent", "evidence_score"
     def assess(self, context: EvaluationContext) -> AgentAssessment:
-        directory = context.project_root / "src" / "content" / "news"
-        all_news = list(directory.glob("*.mdx")) if directory.exists() else []
-        public_news = [path for path in all_news if "publicationStatus: 'review'" not in path.read_text(encoding="utf-8")]
-        verified = pending = unsourced = 0
-        points = 0.0
-        for path in public_news:
-            text = path.read_text(encoding="utf-8")
-            sources = len(re.findall(r"^\s*(?:-\s*)?(?:sourceUrl|url):\s*['\"]?https?://", text, flags=re.MULTILINE))
-            if "verificationStatus: 'verified'" in text and sources >= 2:
-                verified += 1; points += 1.0
-            elif sources:
-                pending += 1; points += 0.45
-            else:
-                unsourced += 1
+        report = context.tool("content-evidence")
+        metrics = report.metrics if report and report.status == "available" else {}
+        public_news = int(metrics.get("public_news", 0))
+        verified = int(metrics.get("verified_news", 0))
+        pending = int(metrics.get("pending_news", 0))
+        unsourced = int(metrics.get("unsourced_news", 0))
+        points = float(metrics.get("evidence_points", 0))
         findings: list[dict[str, object]] = []
         if unsourced:
-            findings.append({"issue": "published_news_without_sources", "dimension": "evidence", "severity": 3, "covered": len(public_news) - unsourced, "total": len(public_news)})
+            findings.append({"issue": "published_news_without_sources", "dimension": "evidence", "severity": 3, "covered": public_news - unsourced, "total": public_news})
         if pending:
-            findings.append({"issue": "published_news_needing_cross_check", "dimension": "evidence", "severity": 2, "pending": pending, "verified": verified, "total": len(public_news)})
+            findings.append({"issue": "published_news_needing_cross_check", "dimension": "evidence", "severity": 2, "pending": pending, "verified": verified, "total": public_news})
         if not public_news:
             findings.append({"issue": "no_news_evidence_to_assess", "dimension": "evidence", "severity": 3})
-        score = round(10 * points / len(public_news), 2) if public_news else 0.0
-        return AgentAssessment(self.name, self.dimension, score, 0.8, tuple(findings))
+        score = round(10 * points / public_news, 2) if public_news else 0.0
+        return AgentAssessment(self.name, self.dimension, score, 0.8 if report else 0.2, tuple(findings))
 
 
 class UsabilityAgent:
@@ -76,7 +79,7 @@ class UsabilityAgent:
         tags = re.findall(r"<img\b(?=[^>]*\bsplash-bg\b)[^>]*>", context.source)
         missing_alt = sum(" alt=" not in tag for tag in tags)
         if not missing_alt:
-            return AgentAssessment(self.name, self.dimension, 9.5, 0.75, ())
+            return AgentAssessment(self.name, self.dimension, 9.5, 0.75 if context.tool("accessibility-source") else 0.35, ())
         finding = {"issue": "decorative_splash_images_need_empty_alt", "dimension": "usability", "severity": 2, "count": missing_alt}
         return AgentAssessment(self.name, self.dimension, 8.0, 0.75, (finding,))
 
@@ -89,7 +92,9 @@ class VisualStructureAgent:
         sources = [match.group(1) for tag in tags if (match := re.search(r'src="([^"]+)"', tag))]
         duplicates = sorted({source for source in sources if sources.count(source) > 1})
         if not duplicates:
-            return AgentAssessment(self.name, self.dimension, 8.5, 0.45, ())
+            screenshot = context.tool("playwright-screenshot")
+            confidence = 0.65 if screenshot and screenshot.status == "available" else 0.45
+            return AgentAssessment(self.name, self.dimension, 8.5, confidence, ())
         finding = {"issue": "duplicate_splash_assets", "dimension": "visual", "severity": 3, "duplicates": duplicates}
         return AgentAssessment(self.name, self.dimension, 6.0, 0.45, (finding,))
 
@@ -98,7 +103,9 @@ class OriginalityAgent:
     name, dimension = "originality-agent", "originality"
     def assess(self, context: EvaluationContext) -> AgentAssessment:
         if not context.brand_marker or context.brand_marker in context.source:
-            return AgentAssessment(self.name, self.dimension, 8.0, 0.35, ())
+            design = context.tool("design-system-inventory")
+            confidence = 0.5 if design and int(design.metrics.get("design_tokens", 0)) else 0.35
+            return AgentAssessment(self.name, self.dimension, 8.0, confidence, ())
         finding = {"issue": "missing_project_brand_voice", "dimension": "originality", "severity": 2}
         return AgentAssessment(self.name, self.dimension, 6.5, 0.35, (finding,))
 
@@ -108,18 +115,26 @@ class PerformanceAgent:
     def assess(self, context: EvaluationContext) -> AgentAssessment:
         tags = re.findall(r"<img\b(?=[^>]*\bsplash-bg\b)[^>]*>", context.source)
         sources = [match.group(1) for tag in tags if (match := re.search(r'src="([^"]+)"', tag))]
-        score = 8.5 if len(sources) != len(set(sources)) else 9.0
-        findings: tuple[dict[str, object], ...] = ()
+        lighthouse = context.tool("lighthouse")
+        asset = context.tool("asset-performance")
+        score = float(lighthouse.metrics["performance"]) if lighthouse and lighthouse.status == "available" and "performance" in lighthouse.metrics else (8.5 if len(sources) != len(set(sources)) else 9.0)
+        findings_list: list[dict[str, object]] = []
+        if asset and int(asset.metrics.get("public_bytes", 0)) > 5 * 1024 * 1024 and not (lighthouse and lighthouse.status == "available"):
+            score -= 0.5
+            findings_list.append({"issue": "large_public_asset_budget", "dimension": "performance", "severity": 2, "bytes": asset.metrics["public_bytes"]})
         if "sessionStorage.getItem('splashShown')" not in context.source:
             score -= 1.0
-            findings = ({"issue": "splash_repeats_each_navigation", "dimension": "performance", "severity": 2},)
-        return AgentAssessment(self.name, self.dimension, score, 0.55, findings)
+            findings_list.append({"issue": "splash_repeats_each_navigation", "dimension": "performance", "severity": 2})
+        confidence = 0.9 if lighthouse and lighthouse.status == "available" else 0.55
+        return AgentAssessment(self.name, self.dimension, score, confidence, tuple(findings_list))
 
 
 class ConsistencyAgent:
     name, dimension = "consistency-agent", "consistency"
     def assess(self, context: EvaluationContext) -> AgentAssessment:
-        return AgentAssessment(self.name, self.dimension, 8.5, 0.4, ())
+        inventory = context.tool("repository-inventory")
+        confidence = 0.6 if inventory and inventory.status == "available" else 0.4
+        return AgentAssessment(self.name, self.dimension, 8.5, confidence, ())
 
 
 class MetaEvaluator:

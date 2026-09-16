@@ -6,7 +6,7 @@ An auditable, local-first agent loop for improving a personal website without le
 Observe → Evaluate → Diagnose → Improve → Verify → Commit / Reject
 ```
 
-Project OS is an early V0.2 reference implementation. It makes every run traceable in SQLite and accepts a candidate only when an independent evaluator reports a strict improvement without regressing protected dimensions.
+Project OS is an early V0.3 reference implementation. It makes every run traceable in SQLite and accepts a candidate only when an independent evaluator reports a strict improvement without regressing protected dimensions.
 
 ## What works today
 
@@ -18,6 +18,7 @@ Project OS is an early V0.2 reference implementation. It makes every run traceab
 - A bounded web-research pipeline. It honours `robots.txt`, stores evidence excerpts, and requires two independent trusted sources before it can publish a generated news draft.
 - A policy gate with explicit protected dimensions and validation requirements; approval is not a model judgment.
 - Seven independent, read-only quality agents—correctness, evidence, usability, visual structure, originality, performance and consistency—plus a Meta Evaluator that only aggregates their results.
+- Tool-backed observations: repository, content-evidence, accessibility-source, asset-performance and design-system inventory tools run locally; optional Playwright screenshots and Lighthouse reports raise runtime confidence when configured.
 - A workspace-scoped, optimistic-concurrency change-set applier for future multi-file coding agents.
 - An isolated multi-file worktree verifier that applies a whole candidate change set before running configured build or test commands.
 
@@ -111,6 +112,17 @@ LangGraph carries only the execution context for one run. Raw content, evidence,
 At project scope, future coding agents must produce a `ChangeSet`: each edited file includes its expected SHA-256 digest, so a concurrent user edit rejects the candidate instead of being overwritten. The applier rejects path traversal and writes each accepted replacement atomically.
 
 Future work includes a browser collector, screenshot-based visual evaluator, a sandboxed coding agent, preview-deployment comparison, evaluator calibration, backups and migrations for multi-process use.
+
+## Optional runtime tools
+
+Static tools run without extra dependencies. For browser screenshots, install the browser extra and Chromium:
+
+```bash
+python -m pip install -e ".[browser]"
+python -m playwright install chromium
+```
+
+Runtime collection is deliberately opt-in. Configure a target URL and enable it only in a disposable or approved environment; the screenshot tool saves an artifact, while the Lighthouse tool records real performance-category scores. Neither tool substitutes for a visual model or human design review.
 
 ## Development
 

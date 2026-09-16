@@ -5,6 +5,7 @@ from pathlib import Path
 from .evaluators import QualityReport
 from .improver import Improvement
 from .quality_agents import EvaluationContext, MetaEvaluator, default_fansite_agents
+from .site_tools import WebsiteToolchain
 
 
 class FansiteEvaluator:
@@ -15,15 +16,17 @@ class FansiteEvaluator:
     changing the aggregate or approval-policy interfaces.
     """
 
-    def __init__(self, project_root: Path) -> None:
+    def __init__(self, project_root: Path, *, target_url: str | None = None, enable_runtime_tools: bool = False) -> None:
         self.project_root = project_root
         self.meta_evaluator = MetaEvaluator(default_fansite_agents())
+        self.toolchain = WebsiteToolchain(target_url=target_url, enable_runtime=enable_runtime_tools)
 
     def evaluate(self, layout: str) -> QualityReport:
         context = EvaluationContext(
             source=layout,
             project_root=self.project_root,
             brand_marker="只有音乐和真心最重要",
+            tool_reports=self.toolchain.collect(self.project_root, layout),
         )
         return self.meta_evaluator.evaluate(context)
 
