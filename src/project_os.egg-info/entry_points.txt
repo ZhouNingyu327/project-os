@@ -1,2 +1,0 @@
-[console_scripts]
-project-os = project_os.cli:main

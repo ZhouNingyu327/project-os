@@ -4,4 +4,5 @@ __pycache__/
 .agent-data/
 outputs/
 .venv/
+*.egg-info/
 *.pre-project-os
