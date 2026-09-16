@@ -26,6 +26,16 @@ Project OS is an early V0.3 reference implementation. It makes every run traceab
 
 This is not yet an autonomous browser-coding system. The current visual score is based on source heuristics, not rendered screenshots; evidence coverage is not a substitute for verifying every claim; and the improvers are narrow deterministic transformations. These limits are safeguards, not hidden capabilities.
 
+## Supervisor architecture
+
+`SupervisorAgent` is the only component allowed to advance the durable task lifecycle or apply a verified candidate:
+
+```text
+Observe → QualityAssessmentAgent → TargetedImprovementAgent → Verify → Supervisor policy decision
+```
+
+`QualityAssessmentAgent` is one boundary around the seven concurrent, read-only dimension specialists and returns an ordered, auditable finding set. `TargetedImprovementAgent` turns the highest-priority finding into either a safe local repair brief or an evidence-research brief. Evidence briefs route to the existing `ResearchPipeline`, which requires two independent high-trust sources before it can stage a content draft; it cannot silently publish unverified facts. The supervisor retains the approval policy, version history, task status, and commit/reject decision.
+
 ## Quick start
 
 Requires Python 3.11+ and Git for worktree verification.

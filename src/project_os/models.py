@@ -22,3 +22,5 @@ class AgentState(TypedDict, total=False):
     dry_run: bool
     validation_passed: bool
     validation_reason: str
+    evaluation_findings: list[dict[str, object]]
+    improvement_brief: dict[str, object]

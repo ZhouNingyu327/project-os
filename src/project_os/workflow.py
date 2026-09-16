@@ -6,6 +6,7 @@ from pathlib import Path
 
 from langgraph.graph import END, START, StateGraph
 
+from .agents import QualityAssessmentAgent, TargetedImprovementAgent
 from .database import Database, now
 from .evaluators import MockWebsiteEvaluator
 from .improver import DeterministicHtmlImprover
@@ -15,11 +16,19 @@ from .profiles import SiteProfile
 from .verification import GitWorktreeBuildVerifier
 
 
-class EvolutionAgent:
-    def __init__(self, db: Database, evaluator: MockWebsiteEvaluator | None = None, improver: DeterministicHtmlImprover | None = None, profile: SiteProfile | None = None, candidate_verifier: GitWorktreeBuildVerifier | None = None, decision_policy: DecisionPolicy | None = None) -> None:
+class SupervisorAgent:
+    """Schedules observation, quality assessment, targeted improvement and policy.
+
+    Worker agents can assess and propose; this supervisor alone persists the
+    task lifecycle and decides whether a verified candidate may be applied.
+    """
+
+    def __init__(self, db: Database, evaluator: MockWebsiteEvaluator | None = None, improver: DeterministicHtmlImprover | None = None, profile: SiteProfile | None = None, candidate_verifier: GitWorktreeBuildVerifier | None = None, decision_policy: DecisionPolicy | None = None, assessment_agent: QualityAssessmentAgent | None = None, improvement_agent: TargetedImprovementAgent | None = None) -> None:
         self.db = db
         self.evaluator = evaluator or MockWebsiteEvaluator()
         self.improver = improver or DeterministicHtmlImprover()
+        self.assessment_agent = assessment_agent or QualityAssessmentAgent(self.evaluator)
+        self.improvement_agent = improvement_agent or TargetedImprovementAgent(self.improver)
         self.profile = profile
         self.candidate_verifier = candidate_verifier
         self.decision_policy = decision_policy or DecisionPolicy(require_validation=False)
@@ -63,29 +72,34 @@ class EvolutionAgent:
 
     def evaluate(self, state: AgentState) -> AgentState:
         html = Path(state["site_path"]).read_text(encoding="utf-8")
-        report = self.evaluator.evaluate(html).as_dict()
+        assessment = self.assessment_agent.assess(html)
+        report = assessment.report.as_dict()
         quality_id = self.db.add_quality(state["project_id"], state["baseline_version_id"], report)
-        return {"baseline_quality_id": quality_id}
+        return {"baseline_quality_id": quality_id, "evaluation_findings": list(assessment.findings)}
 
     def diagnose(self, state: AgentState) -> AgentState:
-        html = Path(state["site_path"]).read_text(encoding="utf-8")
-        report = self.evaluator.evaluate(html)
-        if not report.evidence:
+        findings = tuple(state.get("evaluation_findings", []))
+        if not findings:
             return {"outcome": "no_action", "reason": "No V0.1 evaluator finding requires a repair."}
-        top = max(report.evidence, key=lambda item: int(item["severity"]))
+        top = findings[0]
+        brief = self.improvement_agent.brief_for(top)
+        self.db.add_observation(state["project_id"], "improvement_brief", brief.as_dict() | {"run_id": state["run_id"]})
         title = f"Repair {top['issue']}"
         task_id = self.db.insert(
             "tasks", project_id=state["project_id"], observation_id=state["observation_id"], title=title,
-            priority=int(top["severity"]), status="in_progress", rationale=f"{top['dimension']} finding from independent evaluator.", created_at=now(), completed_at=None,
+            priority=int(top["severity"]), status="in_progress", rationale=f"{top['dimension']} finding routed by {self.improvement_agent.name}: {brief.objective}", created_at=now(), completed_at=None,
         )
-        return {"task_id": task_id}
+        return {"task_id": task_id, "improvement_brief": brief.as_dict()}
 
     def improve(self, state: AgentState) -> AgentState:
         if state.get("outcome") == "no_action":
             return {}
         html = Path(state["site_path"]).read_text(encoding="utf-8")
-        proposal = self.improver.improve(html, self.evaluator.evaluate(html).evidence)
+        proposal = self.improvement_agent.propose_local_repair(html, tuple(state.get("evaluation_findings", [])))
         if proposal is None:
+            brief = state.get("improvement_brief", {})
+            if brief.get("requires_external_evidence"):
+                return {"outcome": "needs_research", "reason": "The targeted improvement agent requires verified external evidence; no unverified content was written."}
             return {"outcome": "no_action", "reason": "No safe V0.1 repair exists for the detected finding."}
         candidate_id = self.db.add_version(state["project_id"], "candidate", proposal.content, state["baseline_version_id"])
         return {"candidate_version_id": candidate_id, "proposed_change": proposal.title, "reason": proposal.rationale}
@@ -96,7 +110,7 @@ class EvolutionAgent:
         # Read candidate from durable storage rather than carrying source code in graph state.
         with self.db.connect() as conn:
             row = conn.execute("SELECT content FROM versions WHERE id = ?", (state["candidate_version_id"],)).fetchone()
-        report = self.evaluator.evaluate(str(row["content"])).as_dict()
+        report = self.assessment_agent.assess(str(row["content"])).report.as_dict()
         quality_id = self.db.add_quality(state["project_id"], state["candidate_version_id"], report)
         if self.candidate_verifier is None:
             return {"candidate_quality_id": quality_id, "validation_passed": True, "validation_reason": "No external build verifier configured."}
@@ -108,7 +122,7 @@ class EvolutionAgent:
     def decide(self, state: AgentState) -> AgentState:
         if not state.get("candidate_version_id"):
             if state.get("task_id"):
-                self.db.update_task(state["task_id"], "rejected")
+                self.db.update_task(state["task_id"], "open" if state.get("outcome") == "needs_research" else "rejected")
             return {"outcome": state.get("outcome", "rejected"), "reason": state.get("reason", "No candidate was produced.")}
         with self.db.connect() as conn:
             baseline = conn.execute("SELECT * FROM quality_reports WHERE id = ?", (state["baseline_quality_id"],)).fetchone()
@@ -140,3 +154,8 @@ class EvolutionAgent:
         if decision == "preview":
             reason = f"Preview only; {reason} Source file was not changed."
         return {"outcome": decision, "reason": reason}
+
+
+# V0.1 public name retained for callers; the implementation is now a
+# supervisor coordinating explicit worker-agent boundaries.
+EvolutionAgent = SupervisorAgent
