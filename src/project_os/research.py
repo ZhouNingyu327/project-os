@@ -60,6 +60,51 @@ class SearchResultSet:
     candidates: list[dict[str, str]]
 
 
+@dataclass(frozen=True)
+class PendingNewsPlanner:
+    """Builds a research proposal from an existing, explicitly pending entry.
+
+    The planner never derives a claim from a model guess. It only selects MDX
+    entries already marked ``needs_review`` by the website editor.
+    """
+
+    project_root: Path
+
+    def next_proposal(self) -> NewsProposal | None:
+        directory = self.project_root / "src" / "content" / "news"
+        if not directory.exists():
+            return None
+        for path in sorted(directory.glob("*.mdx")):
+            text = path.read_text(encoding="utf-8")
+            if "verificationStatus: 'needs_review'" not in text and 'verificationStatus: "needs_review"' not in text:
+                continue
+            title = self._scalar(text, "title")
+            summary = self._scalar(text, "summary")
+            publish_date = self._scalar(text, "publishDate")
+            if not title or not summary or not publish_date:
+                continue
+            tags = re.findall(r"['\"]([^'\"]+)['\"]", self._list_value(text, "tags"))
+            return NewsProposal(
+                title=title,
+                publish_date=publish_date,
+                summary=summary,
+                tags=tags,
+                query=f"{title} 官方 公告",
+                required_terms=[title],
+            )
+        return None
+
+    @staticmethod
+    def _scalar(text: str, key: str) -> str:
+        match = re.search(rf"^{re.escape(key)}:\s*['\"]?(.+?)['\"]?\s*$", text, flags=re.MULTILINE)
+        return match.group(1).strip(" '\"") if match else ""
+
+    @staticmethod
+    def _list_value(text: str, key: str) -> str:
+        match = re.search(rf"^{re.escape(key)}:\s*(\[[^\n]*\])", text, flags=re.MULTILINE)
+        return match.group(1) if match else "[]"
+
+
 class SourceRegistry:
     """Explicit source-quality policy. Unknown domains are never high-trust."""
 
@@ -216,16 +261,27 @@ class ResearchPipeline:
         self.search_agent = WebSearchAgent(search)
         self.verification_agent = EvidenceVerificationAgent(registry, fetcher)
 
+    def start_claim(self, project_id: int, proposal: NewsProposal) -> int:
+        return self.database.insert("claims", project_id=project_id, text=proposal.title, status="researching", created_at=now())
+
+    def discover(self, proposal: NewsProposal) -> SearchResultSet:
+        return self.search_agent.discover(SearchRequest(proposal.title, proposal.query, proposal.required_terms))
+
+    def verify_candidates(self, proposal: NewsProposal, candidates: list[dict[str, str]]) -> VerificationResult:
+        return self.verification_agent.verify(proposal, candidates)
+
+    def persist_result(self, project_id: int, claim_id: int, result: VerificationResult) -> None:
+        for item in result.evidence:
+            self.database.insert("evidence", project_id=project_id, claim_id=claim_id, source=item.url, excerpt=item.excerpt, created_at=now())
+        with self.database.connect() as connection:
+            connection.execute("UPDATE claims SET status = ? WHERE id = ?", (result.status, claim_id))
+
     def research(self, project_id: int, proposal: NewsProposal) -> VerificationResult:
-        claim_id = self.database.insert("claims", project_id=project_id, text=proposal.title, status="researching", created_at=now())
+        claim_id = self.start_claim(project_id, proposal)
         try:
-            request = SearchRequest(proposal.title, proposal.query, proposal.required_terms)
-            discovered = self.search_agent.discover(request)
-            result = self.verification_agent.verify(proposal, discovered.candidates)
-            for item in result.evidence:
-                self.database.insert("evidence", project_id=project_id, claim_id=claim_id, source=item.url, excerpt=item.excerpt, created_at=now())
-            with self.database.connect() as connection:
-                connection.execute("UPDATE claims SET status = ? WHERE id = ?", (result.status, claim_id))
+            discovered = self.discover(proposal)
+            result = self.verify_candidates(proposal, discovered.candidates)
+            self.persist_result(project_id, claim_id, result)
             return result
         except Exception as error:
             self.database.insert("failures", project_id=project_id, task_id=None, stage="web_research", error=str(error), created_at=now())

@@ -24,3 +24,7 @@ class AgentState(TypedDict, total=False):
     validation_reason: str
     evaluation_findings: list[dict[str, object]]
     improvement_brief: dict[str, object]
+    research_proposal: dict[str, object]
+    research_candidates: list[dict[str, str]]
+    research_claim_id: int
+    research_status: str

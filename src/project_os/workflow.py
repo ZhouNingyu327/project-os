@@ -13,6 +13,7 @@ from .improver import DeterministicHtmlImprover
 from .models import AgentState
 from .policy import DecisionPolicy
 from .profiles import SiteProfile
+from .research import NewsProposal, PendingNewsPlanner, ResearchPipeline
 from .verification import GitWorktreeBuildVerifier
 
 
@@ -23,30 +24,50 @@ class SupervisorAgent:
     task lifecycle and decides whether a verified candidate may be applied.
     """
 
-    def __init__(self, db: Database, evaluator: MockWebsiteEvaluator | None = None, improver: DeterministicHtmlImprover | None = None, profile: SiteProfile | None = None, candidate_verifier: GitWorktreeBuildVerifier | None = None, decision_policy: DecisionPolicy | None = None, assessment_agent: QualityAssessmentAgent | None = None, improvement_agent: TargetedImprovementAgent | None = None) -> None:
+    def __init__(self, db: Database, evaluator: MockWebsiteEvaluator | None = None, improver: DeterministicHtmlImprover | None = None, profile: SiteProfile | None = None, candidate_verifier: GitWorktreeBuildVerifier | None = None, decision_policy: DecisionPolicy | None = None, assessment_agent: QualityAssessmentAgent | None = None, improvement_agent: TargetedImprovementAgent | None = None, research_pipeline: ResearchPipeline | None = None) -> None:
         self.db = db
         self.evaluator = evaluator or MockWebsiteEvaluator()
         self.improver = improver or DeterministicHtmlImprover()
         self.assessment_agent = assessment_agent or QualityAssessmentAgent(self.evaluator)
         self.improvement_agent = improvement_agent or TargetedImprovementAgent(self.improver)
         self.profile = profile
+        self.research_pipeline = research_pipeline
         self.candidate_verifier = candidate_verifier
         self.decision_policy = decision_policy or DecisionPolicy(require_validation=False)
         graph = StateGraph(AgentState)
         graph.add_node("observe", self.observe)
         graph.add_node("evaluate", self.evaluate)
         graph.add_node("diagnose", self.diagnose)
+        graph.add_node("search", self.search)
+        graph.add_node("verify_evidence", self.verify_evidence)
         graph.add_node("improve", self.improve)
         graph.add_node("verify", self.verify)
         graph.add_node("decide", self.decide)
         graph.add_edge(START, "observe")
         graph.add_edge("observe", "evaluate")
         graph.add_edge("evaluate", "diagnose")
-        graph.add_edge("diagnose", "improve")
+        graph.add_conditional_edges("diagnose", self.route_after_diagnose, {"improve": "improve", "research": "search", "end": END})
+        graph.add_edge("search", "verify_evidence")
+        graph.add_edge("verify_evidence", "decide")
         graph.add_edge("improve", "verify")
         graph.add_edge("verify", "decide")
         graph.add_edge("decide", END)
         self.graph = graph.compile()
+
+    @staticmethod
+    def _research_root(site_path: Path) -> Path:
+        for parent in (site_path.parent, *site_path.parents):
+            if (parent / "src" / "content" / "news").is_dir():
+                return parent
+        return site_path.parent
+
+    @staticmethod
+    def _proposal_state(proposal: NewsProposal) -> dict[str, object]:
+        return {"title": proposal.title, "publish_date": proposal.publish_date, "summary": proposal.summary, "tags": proposal.tags, "query": proposal.query, "required_terms": proposal.required_terms}
+
+    @staticmethod
+    def _proposal_from_state(raw: dict[str, object]) -> NewsProposal:
+        return NewsProposal(str(raw["title"]), str(raw["publish_date"]), str(raw["summary"]), list(raw["tags"]), str(raw["query"]), list(raw["required_terms"]))
 
     def run(self, site_path: Path, *, dry_run: bool = False, project_path: Path | None = None) -> AgentState:
         return self.graph.invoke({
@@ -91,6 +112,43 @@ class SupervisorAgent:
         )
         return {"task_id": task_id, "improvement_brief": brief.as_dict()}
 
+    def route_after_diagnose(self, state: AgentState) -> str:
+        if state.get("outcome") == "no_action":
+            return "end"
+        return "research" if state.get("improvement_brief", {}).get("requires_external_evidence") else "improve"
+
+    def search(self, state: AgentState) -> AgentState:
+        """Run discovery only; candidates remain untrusted until next node."""
+        if self.research_pipeline is None:
+            return {"outcome": "needs_research", "reason": "A source registry and search provider must be configured before this research task can run."}
+        proposal = PendingNewsPlanner(self._research_root(Path(state["site_path"]))).next_proposal()
+        if proposal is None:
+            return {"outcome": "needs_research", "reason": "No explicitly pending news entry supplied a concrete claim for safe research."}
+        try:
+            claim_id = self.research_pipeline.start_claim(state["project_id"], proposal)
+            discovered = self.research_pipeline.discover(proposal)
+            candidates = discovered.candidates
+            self.db.add_observation(state["project_id"], "search_candidates", {"claim_id": claim_id, "query": proposal.query, "candidate_urls": [item["url"] for item in candidates], "run_id": state["run_id"]})
+            return {"research_claim_id": claim_id, "research_proposal": self._proposal_state(proposal), "research_candidates": candidates}
+        except Exception as error:
+            self.db.insert("failures", project_id=state["project_id"], task_id=state.get("task_id"), stage="web_search", error=str(error), created_at=now())
+            return {"outcome": "needs_research", "reason": f"Search agent could not complete: {error}"}
+
+    def verify_evidence(self, state: AgentState) -> AgentState:
+        """Independently verifies the candidates found by the search worker."""
+        if not state.get("research_claim_id") or self.research_pipeline is None:
+            return {}
+        try:
+            proposal = self._proposal_from_state(state["research_proposal"])
+            result = self.research_pipeline.verify_candidates(proposal, state.get("research_candidates", []))
+            self.research_pipeline.persist_result(state["project_id"], state["research_claim_id"], result)
+            self.db.add_observation(state["project_id"], "evidence_verification", {"claim_id": state["research_claim_id"], "status": result.status, "evidence_urls": [item.url for item in result.evidence], "run_id": state["run_id"]})
+            outcome = "research_verified" if result.status == "verified" else "needs_research"
+            return {"research_status": result.status, "outcome": outcome, "reason": result.reason}
+        except Exception as error:
+            self.db.insert("failures", project_id=state["project_id"], task_id=state.get("task_id"), stage="evidence_verification", error=str(error), created_at=now())
+            return {"outcome": "needs_research", "reason": f"Evidence verification could not complete: {error}"}
+
     def improve(self, state: AgentState) -> AgentState:
         if state.get("outcome") == "no_action":
             return {}
@@ -122,7 +180,10 @@ class SupervisorAgent:
     def decide(self, state: AgentState) -> AgentState:
         if not state.get("candidate_version_id"):
             if state.get("task_id"):
-                self.db.update_task(state["task_id"], "open" if state.get("outcome") == "needs_research" else "rejected")
+                if state.get("outcome") == "research_verified":
+                    self.db.update_task(state["task_id"], "completed")
+                else:
+                    self.db.update_task(state["task_id"], "open" if state.get("outcome") == "needs_research" else "rejected")
             return {"outcome": state.get("outcome", "rejected"), "reason": state.get("reason", "No candidate was produced.")}
         with self.db.connect() as conn:
             baseline = conn.execute("SELECT * FROM quality_reports WHERE id = ?", (state["baseline_quality_id"],)).fetchone()

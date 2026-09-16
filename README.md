@@ -31,10 +31,10 @@ This is not yet an autonomous browser-coding system. The current visual score is
 `SupervisorAgent` is the only component allowed to advance the durable task lifecycle or apply a verified candidate:
 
 ```text
-Observe → QualityAssessmentAgent → TargetedImprovementAgent → WebSearchAgent → EvidenceVerificationAgent → Verify → Supervisor policy decision
+Observe → QualityAssessmentAgent → TargetedImprovementAgent → (local repair or WebSearchAgent → EvidenceVerificationAgent) → Verify → Supervisor policy decision
 ```
 
-`QualityAssessmentAgent` is one boundary around the seven concurrent, read-only dimension specialists and returns an ordered, auditable finding set. `TargetedImprovementAgent` turns the highest-priority finding into either a safe local repair brief or an evidence-research brief. `WebSearchAgent` makes a bounded, deduplicated search for public candidate sources; it cannot declare any result true. `EvidenceVerificationAgent` independently re-fetches robots-permitted pages, applies the trusted-source registry and verifies required terms across at least two independent high-trust domains. Only verified evidence can reach the draft staging step. The supervisor retains the approval policy, version history, task status, and commit/reject decision.
+`QualityAssessmentAgent` is one boundary around the seven concurrent, read-only dimension specialists and returns an ordered, auditable finding set. `TargetedImprovementAgent` turns the highest-priority finding into either a safe local repair brief or an evidence-research brief. Evidence findings now route through real LangGraph nodes: `WebSearchAgent` makes a bounded, deduplicated search for public candidate sources, then `EvidenceVerificationAgent` independently re-fetches robots-permitted pages, applies the trusted-source registry and verifies required terms across at least two independent high-trust domains. Search candidates, claims, evidence, verification results and failures are persisted to SQLite. Only verified evidence can reach the draft staging step; this V0.3 supervisor records verified research but does not automatically publish a content draft. The supervisor retains the approval policy, version history, task status, and commit/reject decision.
 
 ## Quick start
 
@@ -75,6 +75,15 @@ For a candidate that must compile in an isolated Git worktree before it is appli
 project-os run --profile shan-yichun-splash --verify-worktree \
   --site /path/to/site/src/layouts/BaseLayout.astro \
   --db .agent-data/site.db
+```
+
+To enable the evidence-research branch, configure a trusted-source registry and a `TAVILY_API_KEY`; the workflow only researches existing news files marked `verificationStatus: 'needs_review'`:
+
+```bash
+project-os run --profile shan-yichun-splash --dry-run \
+  --site /path/to/site/src/layouts/BaseLayout.astro \
+  --db .agent-data/site.db \
+  --source-registry config/source-registry.json
 ```
 
 Use a disposable multi-cycle preview to examine a profile without changing the real site:

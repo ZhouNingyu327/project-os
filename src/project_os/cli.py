@@ -35,6 +35,7 @@ def main() -> None:
     run.add_argument("--verify-worktree", action="store_true", help="Build a candidate in an isolated Git worktree before allowing a commit.")
     run.add_argument("--target-url", help="Deployed URL used only for opt-in runtime observations.")
     run.add_argument("--runtime-tools", action="store_true", help="Collect Lighthouse and browser screenshot observations for --target-url.")
+    run.add_argument("--source-registry", type=Path, help="Trusted-source registry; enables the Supervisor's research and evidence branch.")
     history = subparsers.add_parser("history", help="Show commit/reject decisions.")
     history.add_argument("--db", type=Path, default=Path("demo_site/.project-os/project-os.db"))
     evolve = subparsers.add_parser("evolve-fansite-preview", help="Safely run multiple fansite improvements in a throwaway workspace.")
@@ -106,9 +107,11 @@ def main() -> None:
     db = Database(args.db or default_db(site))
     db.initialize()
     if args.profile == "shan-yichun-splash":
+        research_pipeline = ResearchPipeline(db, SourceRegistry.from_json(args.source_registry)) if args.source_registry else None
         agent = EvolutionAgent(
             db, evaluator=FansiteEvaluator(site.parents[2], target_url=args.target_url, enable_runtime_tools=args.runtime_tools), improver=FansiteImprover(), profile=SHAN_YICHUN_FANSITE,
             candidate_verifier=GitWorktreeBuildVerifier() if args.verify_worktree else None,
+            research_pipeline=research_pipeline,
         )
     else:
         agent = EvolutionAgent(db)
