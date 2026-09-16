@@ -35,3 +35,19 @@ class MultiAgentQualityTest(unittest.TestCase):
             with db.connect() as conn:
                 count = conn.execute("SELECT COUNT(*) AS count FROM agent_assessments WHERE quality_report_id = ?", (quality_id,)).fetchone()["count"]
             self.assertEqual(count, 7)
+
+    def test_performance_agent_flags_a_long_first_visit_splash(self) -> None:
+        source = """
+        <img src=\"/one.jpg\" class=\"splash-bg\" alt=\"\" />
+        <script>
+          sessionStorage.getItem('splashShown');
+          var minShow = 6000;
+        </script>
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "src" / "content" / "news").mkdir(parents=True)
+            report = FansiteEvaluator(root).evaluate(source)
+        performance = next(item for item in report.assessments or [] if item["dimension"] == "performance")
+        self.assertEqual(performance["score"], 8.0)
+        self.assertIn("long_first_visit_splash", {item["issue"] for item in performance["findings"]})

@@ -125,8 +125,17 @@ class PerformanceAgent:
         if "sessionStorage.getItem('splashShown')" not in context.source:
             score -= 1.0
             findings_list.append({"issue": "splash_repeats_each_navigation", "dimension": "performance", "severity": 2})
+        # A first-visit splash may be intentional, but a long forced wait delays the
+        # page's actual content even after its assets have loaded.  Keep this source
+        # check separate from Lighthouse so an offline evaluation can still flag it.
+        splash_assignments = re.findall(r"var\s+minShow\s*=([^;]+);", context.source)
+        splash_waits = [int(value) for assignment in splash_assignments for value in re.findall(r"\d+", assignment)]
+        if splash_waits and max(splash_waits) > 2500:
+            wait_ms = max(splash_waits)
+            score -= 1.0
+            findings_list.append({"issue": "long_first_visit_splash", "dimension": "performance", "severity": 2, "milliseconds": wait_ms})
         confidence = 0.9 if lighthouse and lighthouse.status == "available" else 0.55
-        return AgentAssessment(self.name, self.dimension, score, confidence, tuple(findings_list))
+        return AgentAssessment(self.name, self.dimension, max(0.0, score), confidence, tuple(findings_list))
 
 
 class ConsistencyAgent:
