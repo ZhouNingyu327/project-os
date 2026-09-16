@@ -1,0 +1,7 @@
+{
+  "sources": {
+    "example-official.com": { "reliability": 0.95, "kind": "official" },
+    "example-broadcaster.com": { "reliability": 0.9, "kind": "broadcaster" },
+    "example-awards.org": { "reliability": 0.9, "kind": "award_organization" }
+  }
+}

@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.project-os/
+.agent-data/
+outputs/
+.venv/
+*.pre-project-os

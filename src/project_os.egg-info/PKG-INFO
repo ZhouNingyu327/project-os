@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: project-os
+Version: 0.1.0
+Summary: A minimal, auditable Evolution Agent for personal websites
+Requires-Python: >=3.11
+License-File: LICENSE
+Requires-Dist: langgraph<1,>=0.2
+Dynamic: license-file
