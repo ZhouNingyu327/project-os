@@ -44,6 +44,22 @@ class VerificationResult:
     evidence: list[WebEvidence]
 
 
+@dataclass(frozen=True)
+class SearchRequest:
+    """A bounded research request derived from a site gap, never a crawl job."""
+
+    topic: str
+    query: str
+    required_terms: list[str]
+    limit: int = 8
+
+
+@dataclass(frozen=True)
+class SearchResultSet:
+    request: SearchRequest
+    candidates: list[dict[str, str]]
+
+
 class SourceRegistry:
     """Explicit source-quality policy. Unknown domains are never high-trust."""
 
@@ -83,6 +99,43 @@ class TavilySearch:
             {"url": item["url"], "title": item.get("title", ""), "excerpt": item.get("content", "")}
             for item in payload.get("results", [])
         ]
+
+
+class WebSearchAgent:
+    """Discovers diverse public leads for one bounded, site-specific request.
+
+    It is deliberately unable to mark a claim true or publish content. Its
+    output is only a deduplicated candidate set for ``EvidenceVerificationAgent``.
+    """
+
+    name = "web-search-agent"
+
+    def __init__(self, search: TavilySearch | None = None) -> None:
+        self.search = search or TavilySearch()
+
+    def discover(self, request: SearchRequest) -> SearchResultSet:
+        raw = self.search.search(request.query, limit=min(max(request.limit, 1), 12))
+        seen: set[str] = set()
+        candidates = []
+        for item in raw:
+            url = item.get("url", "")
+            if url and url not in seen:
+                seen.add(url)
+                candidates.append({"url": url, "title": item.get("title", ""), "excerpt": item.get("excerpt", "")})
+        return SearchResultSet(request, candidates)
+
+    @staticmethod
+    def plan_for_gap(*, site_name: str, site_goal: str, issue: str, required_terms: list[str]) -> SearchRequest:
+        focus = {
+            "published_news_without_sources": "official announcement news release",
+            "published_news_needing_cross_check": "official announcement news release",
+            "missing_project_brand_voice": "official biography interview creative work",
+        }.get(issue, "official information and primary sources")
+        return SearchRequest(
+            topic=f"{site_name}: {issue}",
+            query=f"{site_name} {focus}",
+            required_terms=required_terms or [site_name],
+        )
 
 
 class RespectfulPageFetcher:
@@ -136,26 +189,39 @@ class EvidenceVerifier:
         return VerificationResult("needs_review", "Fewer than two independent high-trust sources support the required terms; no publication is allowed.", evidence)
 
 
+class EvidenceVerificationAgent:
+    """Fetches allowed pages and independently applies source/claim verification."""
+
+    name = "evidence-verification-agent"
+
+    def __init__(self, registry: SourceRegistry, fetcher: RespectfulPageFetcher | None = None) -> None:
+        self.fetcher = fetcher or RespectfulPageFetcher()
+        self.rules = EvidenceVerifier(registry)
+
+    def verify(self, proposal: NewsProposal, candidates: list[dict[str, str]]) -> VerificationResult:
+        fetched_results = []
+        for item in candidates:
+            try:
+                fetched_results.append({**item, "excerpt": self.fetcher.fetch_text(item["url"])[:8_000]})
+            except (OSError, PermissionError, ValueError, UnicodeError):
+                # Discovery is not evidence. A failed, disallowed, or non-HTML
+                # candidate cannot influence the verification decision.
+                continue
+        return self.rules.verify(proposal, fetched_results)
+
+
 class ResearchPipeline:
     def __init__(self, database: Database, registry: SourceRegistry, search: TavilySearch | None = None, fetcher: RespectfulPageFetcher | None = None) -> None:
         self.database = database
-        self.verifier = EvidenceVerifier(registry)
-        self.search = search or TavilySearch()
-        self.fetcher = fetcher or RespectfulPageFetcher()
+        self.search_agent = WebSearchAgent(search)
+        self.verification_agent = EvidenceVerificationAgent(registry, fetcher)
 
     def research(self, project_id: int, proposal: NewsProposal) -> VerificationResult:
         claim_id = self.database.insert("claims", project_id=project_id, text=proposal.title, status="researching", created_at=now())
         try:
-            search_results = self.search.search(proposal.query)
-            fetched_results = []
-            for item in search_results:
-                try:
-                    fetched_results.append({**item, "excerpt": self.fetcher.fetch_text(item["url"])[:8_000]})
-                except (OSError, PermissionError, ValueError, UnicodeError):
-                    # An unavailable or disallowed page remains a discovery lead,
-                    # never evidence supporting publication.
-                    continue
-            result = self.verifier.verify(proposal, fetched_results)
+            request = SearchRequest(proposal.title, proposal.query, proposal.required_terms)
+            discovered = self.search_agent.discover(request)
+            result = self.verification_agent.verify(proposal, discovered.candidates)
             for item in result.evidence:
                 self.database.insert("evidence", project_id=project_id, claim_id=claim_id, source=item.url, excerpt=item.excerpt, created_at=now())
             with self.database.connect() as connection:

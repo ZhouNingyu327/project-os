@@ -31,10 +31,10 @@ This is not yet an autonomous browser-coding system. The current visual score is
 `SupervisorAgent` is the only component allowed to advance the durable task lifecycle or apply a verified candidate:
 
 ```text
-Observe → QualityAssessmentAgent → TargetedImprovementAgent → Verify → Supervisor policy decision
+Observe → QualityAssessmentAgent → TargetedImprovementAgent → WebSearchAgent → EvidenceVerificationAgent → Verify → Supervisor policy decision
 ```
 
-`QualityAssessmentAgent` is one boundary around the seven concurrent, read-only dimension specialists and returns an ordered, auditable finding set. `TargetedImprovementAgent` turns the highest-priority finding into either a safe local repair brief or an evidence-research brief. Evidence briefs route to the existing `ResearchPipeline`, which requires two independent high-trust sources before it can stage a content draft; it cannot silently publish unverified facts. The supervisor retains the approval policy, version history, task status, and commit/reject decision.
+`QualityAssessmentAgent` is one boundary around the seven concurrent, read-only dimension specialists and returns an ordered, auditable finding set. `TargetedImprovementAgent` turns the highest-priority finding into either a safe local repair brief or an evidence-research brief. `WebSearchAgent` makes a bounded, deduplicated search for public candidate sources; it cannot declare any result true. `EvidenceVerificationAgent` independently re-fetches robots-permitted pages, applies the trusted-source registry and verifies required terms across at least two independent high-trust domains. Only verified evidence can reach the draft staging step. The supervisor retains the approval policy, version history, task status, and commit/reject decision.
 
 ## Quick start
 
