@@ -6,6 +6,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from .changes import ChangeSet, ChangeSetError, WorkspaceChangeApplier
+
 
 @dataclass(frozen=True)
 class ValidationResult:
@@ -65,6 +67,60 @@ class GitWorktreeBuildVerifier:
                 detail = (build.stderr or build.stdout).strip()[-1200:]
                 return ValidationResult(False, f"Candidate build failed: {detail}")
             return ValidationResult(True, "Candidate built successfully in an isolated Git worktree.")
+        finally:
+            if added:
+                subprocess.run(("git", "worktree", "remove", "--force", str(worktree)), cwd=root, text=True, capture_output=True, check=False)
+            elif worktree.exists():
+                shutil.rmtree(worktree, ignore_errors=True)
+
+
+class GitWorktreeChangeSetVerifier:
+    """Validate a complete project change set in an isolated Git worktree.
+
+    Unlike the V0.1 verifier, this applies every reviewed file change to the
+    temporary checkout. It is therefore suitable for a coding agent that edits
+    components, content and configuration together.
+    """
+
+    def __init__(self, commands: tuple[tuple[str, ...], ...]) -> None:
+        if not commands:
+            raise ValueError("At least one validation command is required.")
+        self.commands = commands
+
+    def validate(self, workspace_root: Path, change_set: ChangeSet) -> ValidationResult:
+        root_result = subprocess.run(
+            ("git", "rev-parse", "--show-toplevel"), cwd=workspace_root,
+            text=True, capture_output=True, check=False,
+        )
+        if root_result.returncode:
+            return ValidationResult(False, "Change-set verification requires a Git repository.")
+        root = Path(root_result.stdout.strip())
+        holder = root / ".project-os" / "worktrees"
+        try:
+            holder.mkdir(parents=True, exist_ok=True)
+            worktree = Path(tempfile.mkdtemp(prefix="changeset-", dir=holder))
+        except OSError as error:
+            return ValidationResult(False, f"Could not create isolated candidate workspace: {error}")
+        worktree.rmdir()
+        added = False
+        try:
+            add = subprocess.run(
+                ("git", "worktree", "add", "--detach", str(worktree), "HEAD"), cwd=root,
+                text=True, capture_output=True, check=False,
+            )
+            if add.returncode:
+                return ValidationResult(False, f"Could not create candidate worktree: {add.stderr.strip()}")
+            added = True
+            try:
+                WorkspaceChangeApplier(worktree).apply(change_set)
+            except ChangeSetError as error:
+                return ValidationResult(False, f"Candidate change set is unsafe or stale: {error}")
+            for command in self.commands:
+                result = subprocess.run(command, cwd=worktree, text=True, capture_output=True, check=False)
+                if result.returncode:
+                    detail = (result.stderr or result.stdout).strip()[-1200:]
+                    return ValidationResult(False, f"Validation command {' '.join(command)} failed: {detail}")
+            return ValidationResult(True, "Candidate change set passed all isolated validation commands.")
         finally:
             if added:
                 subprocess.run(("git", "worktree", "remove", "--force", str(worktree)), cwd=root, text=True, capture_output=True, check=False)

@@ -105,6 +105,24 @@ CREATE TABLE IF NOT EXISTS decisions (
     reason TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS change_sets (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    external_id TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('proposed', 'validated', 'applied', 'rejected')),
+    created_at TEXT NOT NULL,
+    UNIQUE(project_id, external_id)
+);
+CREATE TABLE IF NOT EXISTS change_set_files (
+    id INTEGER PRIMARY KEY,
+    change_set_id INTEGER NOT NULL REFERENCES change_sets(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    expected_sha256 TEXT,
+    content_sha256 TEXT NOT NULL,
+    content TEXT NOT NULL,
+    UNIQUE(change_set_id, path)
+);
 """
 
 
@@ -212,3 +230,25 @@ class Database:
         query += " ORDER BY d.id"
         with self.connect() as conn:
             return conn.execute(query, values).fetchall()
+
+    def add_change_set(self, project_id: int, *, external_id: str, summary: str, files: list[dict[str, str | None]]) -> int:
+        """Persist a multi-file candidate before it enters verification."""
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO change_sets(project_id, external_id, summary, status, created_at) VALUES (?, ?, ?, 'proposed', ?)",
+                (project_id, external_id, summary, now()),
+            )
+            change_set_id = int(cursor.lastrowid)
+            for file in files:
+                content = str(file["content"])
+                conn.execute(
+                    "INSERT INTO change_set_files(change_set_id, path, expected_sha256, content_sha256, content) VALUES (?, ?, ?, ?, ?)",
+                    (change_set_id, file["path"], file.get("expected_sha256"), hashlib.sha256(content.encode()).hexdigest(), content),
+                )
+            return change_set_id
+
+    def update_change_set_status(self, change_set_id: int, status: str) -> None:
+        if status not in {"proposed", "validated", "applied", "rejected"}:
+            raise ValueError(f"Unsupported change-set status: {status}")
+        with self.connect() as conn:
+            conn.execute("UPDATE change_sets SET status = ? WHERE id = ?", (status, change_set_id))

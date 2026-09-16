@@ -18,6 +18,7 @@ Project OS is an early V0.2 reference implementation. It makes every run traceab
 - A bounded web-research pipeline. It honours `robots.txt`, stores evidence excerpts, and requires two independent trusted sources before it can publish a generated news draft.
 - A policy gate with explicit protected dimensions and validation requirements; approval is not a model judgment.
 - A workspace-scoped, optimistic-concurrency change-set applier for future multi-file coding agents.
+- An isolated multi-file worktree verifier that applies a whole candidate change set before running configured build or test commands.
 
 ## Intentional limitations
 
