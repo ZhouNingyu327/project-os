@@ -43,6 +43,15 @@ CREATE TABLE IF NOT EXISTS quality_reports (
     evidence_json TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS agent_assessments (
+    id INTEGER PRIMARY KEY,
+    quality_report_id INTEGER NOT NULL REFERENCES quality_reports(id) ON DELETE CASCADE,
+    agent TEXT NOT NULL,
+    dimension TEXT NOT NULL,
+    score REAL NOT NULL,
+    confidence REAL NOT NULL,
+    findings_json TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -204,22 +213,18 @@ class Database:
         return self.insert("observations", project_id=project_id, kind=kind, payload_json=json.dumps(payload), created_at=now())
 
     def add_quality(self, project_id: int, version_id: int, report: dict[str, Any]) -> int:
-        return self.insert(
-            "quality_reports",
-            project_id=project_id,
-            version_id=version_id,
-            evaluator=report["evaluator"],
-            overall_score=report["overall_score"],
-            correctness=report["correctness"],
-            usability=report["usability"],
-            visual=report["visual"],
-            performance=report["performance"],
-            evidence_score=report.get("evidence_score", 0),
-            originality=report.get("originality", 0),
-            consistency=report.get("consistency", 0),
-            evidence_json=json.dumps(report["evidence"]),
-            created_at=now(),
-        )
+        with self.connect() as conn:
+            cursor = conn.execute(
+                "INSERT INTO quality_reports(project_id, version_id, evaluator, overall_score, correctness, usability, visual, performance, evidence_score, originality, consistency, evidence_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (project_id, version_id, report["evaluator"], report["overall_score"], report["correctness"], report["usability"], report["visual"], report["performance"], report.get("evidence_score", 0), report.get("originality", 0), report.get("consistency", 0), json.dumps(report["evidence"]), now()),
+            )
+            quality_id = int(cursor.lastrowid)
+            for assessment in report.get("assessments", []):
+                conn.execute(
+                    "INSERT INTO agent_assessments(quality_report_id, agent, dimension, score, confidence, findings_json) VALUES (?, ?, ?, ?, ?, ?)",
+                    (quality_id, assessment["agent"], assessment["dimension"], assessment["score"], assessment["confidence"], json.dumps(assessment["findings"])),
+                )
+            return quality_id
 
     def history(self, project_id: int | None = None) -> list[sqlite3.Row]:
         query = "SELECT d.decision, d.reason, d.created_at, p.name AS project, t.title FROM decisions d JOIN projects p ON p.id=d.project_id LEFT JOIN tasks t ON t.id=d.task_id"

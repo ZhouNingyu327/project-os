@@ -16,6 +16,7 @@ class QualityReport:
     evidence_score: float = 0.0
     originality: float = 0.0
     consistency: float = 0.0
+    assessments: list[dict[str, object]] | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -29,6 +30,7 @@ class QualityReport:
             "evidence_score": self.evidence_score,
             "originality": self.originality,
             "consistency": self.consistency,
+            "assessments": self.assessments or [],
         }
 
 

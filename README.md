@@ -17,6 +17,7 @@ Project OS is an early V0.2 reference implementation. It makes every run traceab
 - Isolated Git-worktree validation: build a candidate before applying a source change.
 - A bounded web-research pipeline. It honours `robots.txt`, stores evidence excerpts, and requires two independent trusted sources before it can publish a generated news draft.
 - A policy gate with explicit protected dimensions and validation requirements; approval is not a model judgment.
+- Seven independent, read-only quality agents—correctness, evidence, usability, visual structure, originality, performance and consistency—plus a Meta Evaluator that only aggregates their results.
 - A workspace-scoped, optimistic-concurrency change-set applier for future multi-file coding agents.
 - An isolated multi-file worktree verifier that applies a whole candidate change set before running configured build or test commands.
 
