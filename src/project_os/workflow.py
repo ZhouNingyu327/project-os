@@ -10,17 +10,19 @@ from .database import Database, now
 from .evaluators import MockWebsiteEvaluator
 from .improver import DeterministicHtmlImprover
 from .models import AgentState
+from .policy import DecisionPolicy
 from .profiles import SiteProfile
 from .verification import GitWorktreeBuildVerifier
 
 
 class EvolutionAgent:
-    def __init__(self, db: Database, evaluator: MockWebsiteEvaluator | None = None, improver: DeterministicHtmlImprover | None = None, profile: SiteProfile | None = None, candidate_verifier: GitWorktreeBuildVerifier | None = None) -> None:
+    def __init__(self, db: Database, evaluator: MockWebsiteEvaluator | None = None, improver: DeterministicHtmlImprover | None = None, profile: SiteProfile | None = None, candidate_verifier: GitWorktreeBuildVerifier | None = None, decision_policy: DecisionPolicy | None = None) -> None:
         self.db = db
         self.evaluator = evaluator or MockWebsiteEvaluator()
         self.improver = improver or DeterministicHtmlImprover()
         self.profile = profile
         self.candidate_verifier = candidate_verifier
+        self.decision_policy = decision_policy or DecisionPolicy(require_validation=False)
         graph = StateGraph(AgentState)
         graph.add_node("observe", self.observe)
         graph.add_node("evaluate", self.evaluate)
@@ -112,11 +114,10 @@ class EvolutionAgent:
             baseline = conn.execute("SELECT * FROM quality_reports WHERE id = ?", (state["baseline_quality_id"],)).fetchone()
             candidate = conn.execute("SELECT * FROM quality_reports WHERE id = ?", (state["candidate_quality_id"],)).fetchone()
             candidate_content = conn.execute("SELECT content FROM versions WHERE id = ?", (state["candidate_version_id"],)).fetchone()["content"]
-        accepted = (
-            candidate["overall_score"] > baseline["overall_score"]
-            and candidate["correctness"] >= baseline["correctness"]
-            and state.get("validation_passed") is not False
+        policy = self.decision_policy.evaluate(
+            baseline, candidate, validation_passed=state.get("validation_passed")
         )
+        accepted = policy.accepted
         experiment_id = self.db.insert(
             "experiments", project_id=state["project_id"], task_id=state["task_id"], baseline_version_id=state["baseline_version_id"],
             candidate_version_id=state["candidate_version_id"], status="running", created_at=now(), completed_at=None,
@@ -124,7 +125,7 @@ class EvolutionAgent:
         decision = "preview" if accepted and state.get("dry_run") else "commit" if accepted else "reject"
         reason = (
             f"Score {baseline['overall_score']} → {candidate['overall_score']}; correctness {baseline['correctness']} → {candidate['correctness']}; {state.get('validation_reason', '')}"
-            if accepted else f"Candidate failed policy: score {baseline['overall_score']} → {candidate['overall_score']}; {state.get('validation_reason', '')}"
+            if accepted else f"Candidate failed policy: {policy.reason}; {state.get('validation_reason', '')}"
         )
         if accepted and not state.get("dry_run"):
             target = Path(state["site_path"])

@@ -6,7 +6,7 @@ An auditable, local-first agent loop for improving a personal website without le
 Observe → Evaluate → Diagnose → Improve → Verify → Commit / Reject
 ```
 
-Project OS is intentionally a small V0.1 reference implementation. It makes every run traceable in SQLite and accepts a candidate only when an independent evaluator reports a strict improvement without regressing correctness.
+Project OS is an early V0.2 reference implementation. It makes every run traceable in SQLite and accepts a candidate only when an independent evaluator reports a strict improvement without regressing protected dimensions.
 
 ## What works today
 
@@ -16,6 +16,8 @@ Project OS is intentionally a small V0.1 reference implementation. It makes ever
 - A profile adapter for an Astro fansite, with source-level quality checks across correctness, evidence coverage, usability, visual structure, originality, performance, and consistency.
 - Isolated Git-worktree validation: build a candidate before applying a source change.
 - A bounded web-research pipeline. It honours `robots.txt`, stores evidence excerpts, and requires two independent trusted sources before it can publish a generated news draft.
+- A policy gate with explicit protected dimensions and validation requirements; approval is not a model judgment.
+- A workspace-scoped, optimistic-concurrency change-set applier for future multi-file coding agents.
 
 ## Intentional limitations
 
@@ -103,6 +105,8 @@ Pass `--publish-to /path/to/site/src/content/news` only after a result is `verif
 ## Architecture
 
 LangGraph carries only the execution context for one run. Raw content, evidence, observations and decision history stay in SQLite, so a restart does not erase the audit trail. The approval policy is simple: a candidate must improve weighted quality and must not lower correctness.
+
+At project scope, future coding agents must produce a `ChangeSet`: each edited file includes its expected SHA-256 digest, so a concurrent user edit rejects the candidate instead of being overwritten. The applier rejects path traversal and writes each accepted replacement atomically.
 
 Future work includes a browser collector, screenshot-based visual evaluator, a sandboxed coding agent, preview-deployment comparison, evaluator calibration, backups and migrations for multi-process use.
 
