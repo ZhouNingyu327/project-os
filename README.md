@@ -130,6 +130,28 @@ the gap to the discovery → cross-check → verification workflow.
 
 ## Research boundary
 
+### Content workflow contract
+
+Every content type follows one durable lifecycle:
+
+```text
+Scope → expected inventory → discovery leads → identity/deduplication
+      → independent verification → structured draft → completeness audit
+      → publish, hold for review, or reject with a reason
+```
+
+`ContentWorkflow` persists a candidate ledger in SQLite. Its states are
+`discovered`, `needs_review`, `verified`, `published`, and `rejected`.
+Unregistered webpages, social posts, screenshots and OCR output are discovery
+leads: they may create a candidate, but cannot verify or publish a claim. A
+verified candidate needs two independent trusted domains; a rejection needs a
+stored reason. Identity is content-specific (for example, a stage combines
+show, episode, song and partner), rather than a filename or a title alone.
+
+The same contract applies to stage archives, discographies, news, appearances,
+awards and biographies. The Manifest gate is the final completeness check for
+bounded collections; source coverage alone never proves completeness.
+
 `research-news` stages a draft by default. Publishing is deliberately blocked unless the verifier finds two independent entries from the trusted-source registry with the required term overlap.
 
 Copy `config/source-registry.example.json` to a private configuration file and edit the approved domains. If using the built-in search adapter, set `TAVILY_API_KEY` in your environment; never commit that key.

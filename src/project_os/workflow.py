@@ -128,6 +128,7 @@ class SupervisorAgent:
             claim_id = self.research_pipeline.start_claim(state["project_id"], proposal)
             discovered = self.research_pipeline.discover(proposal)
             candidates = discovered.candidates
+            self.research_pipeline.record_discovery(state["project_id"], proposal, candidates)
             self.db.add_observation(state["project_id"], "search_candidates", {"claim_id": claim_id, "query": proposal.query, "candidate_urls": [item["url"] for item in candidates], "run_id": state["run_id"]})
             return {"research_claim_id": claim_id, "research_proposal": self._proposal_state(proposal), "research_candidates": candidates}
         except Exception as error:
@@ -141,7 +142,7 @@ class SupervisorAgent:
         try:
             proposal = self._proposal_from_state(state["research_proposal"])
             result = self.research_pipeline.verify_candidates(proposal, state.get("research_candidates", []))
-            self.research_pipeline.persist_result(state["project_id"], state["research_claim_id"], result)
+            self.research_pipeline.persist_result(state["project_id"], state["research_claim_id"], proposal, result)
             self.db.add_observation(state["project_id"], "evidence_verification", {"claim_id": state["research_claim_id"], "status": result.status, "evidence_urls": [item.url for item in result.evidence], "run_id": state["run_id"]})
             outcome = "research_verified" if result.status == "verified" else "needs_research"
             return {"research_status": result.status, "outcome": outcome, "reason": result.reason}

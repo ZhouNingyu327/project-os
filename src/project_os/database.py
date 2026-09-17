@@ -79,6 +79,19 @@ CREATE TABLE IF NOT EXISTS claims (
     status TEXT NOT NULL DEFAULT 'unverified',
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS content_candidates (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id),
+    identity_key TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('discovered', 'needs_review', 'verified', 'published', 'rejected')),
+    discovery_sources_json TEXT NOT NULL DEFAULT '[]',
+    verification_json TEXT NOT NULL DEFAULT '[]',
+    rejection_reason TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(project_id, identity_key)
+);
 CREATE TABLE IF NOT EXISTS evidence (
     id INTEGER PRIMARY KEY,
     project_id INTEGER NOT NULL REFERENCES projects(id),
@@ -211,6 +224,31 @@ class Database:
 
     def add_observation(self, project_id: int, kind: str, payload: dict[str, Any]) -> int:
         return self.insert("observations", project_id=project_id, kind=kind, payload_json=json.dumps(payload), created_at=now())
+
+    def upsert_content_candidate(self, project_id: int, *, identity_key: str, scope: str, status: str, discovery_sources: list[str] | None = None, verification: list[dict[str, str]] | None = None, rejection_reason: str | None = None) -> int:
+        """Persist a content lead without treating discovery as verification."""
+        allowed = {"discovered", "needs_review", "verified", "published", "rejected"}
+        if status not in allowed:
+            raise ValueError(f"Unsupported content-candidate status: {status}")
+        if status == "rejected" and not rejection_reason:
+            raise ValueError("Rejected content candidates require a rejection reason.")
+        timestamp = now()
+        with self.connect() as conn:
+            row = conn.execute("SELECT id, status, discovery_sources_json, verification_json, rejection_reason FROM content_candidates WHERE project_id = ? AND identity_key = ?", (project_id, identity_key)).fetchone()
+            if row:
+                # Published is terminal for automated research: later discovery
+                # must not silently downgrade an already reviewed record.
+                next_status = row["status"] if row["status"] in {"verified", "published"} and status == "discovered" else status
+                conn.execute(
+                    "UPDATE content_candidates SET scope = ?, status = ?, discovery_sources_json = ?, verification_json = ?, rejection_reason = ?, updated_at = ? WHERE id = ?",
+                    (scope, next_status, json.dumps(discovery_sources) if discovery_sources is not None else row["discovery_sources_json"], json.dumps(verification) if verification is not None else row["verification_json"], rejection_reason if rejection_reason is not None else row["rejection_reason"], timestamp, row["id"]),
+                )
+                return int(row["id"])
+            cursor = conn.execute(
+                "INSERT INTO content_candidates(project_id, identity_key, scope, status, discovery_sources_json, verification_json, rejection_reason, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (project_id, identity_key, scope, status, json.dumps(discovery_sources or []), json.dumps(verification or []), rejection_reason, timestamp, timestamp),
+            )
+            return int(cursor.lastrowid)
 
     def add_quality(self, project_id: int, version_id: int, report: dict[str, Any]) -> int:
         with self.connect() as conn:

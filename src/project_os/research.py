@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .database import Database, now
+from .content_workflow import ContentIdentity, ContentWorkflow
 
 
 @dataclass(frozen=True)
@@ -258,11 +259,20 @@ class EvidenceVerificationAgent:
 class ResearchPipeline:
     def __init__(self, database: Database, registry: SourceRegistry, search: TavilySearch | None = None, fetcher: RespectfulPageFetcher | None = None) -> None:
         self.database = database
+        self.content_workflow = ContentWorkflow(database)
         self.search_agent = WebSearchAgent(search)
         self.verification_agent = EvidenceVerificationAgent(registry, fetcher)
 
     def start_claim(self, project_id: int, proposal: NewsProposal) -> int:
+        self.content_workflow.discover(project_id, self._identity(proposal), [])
         return self.database.insert("claims", project_id=project_id, text=proposal.title, status="researching", created_at=now())
+
+    @staticmethod
+    def _identity(proposal: NewsProposal) -> ContentIdentity:
+        return ContentIdentity("news", (("title", proposal.title), ("publish_date", proposal.publish_date)))
+
+    def record_discovery(self, project_id: int, proposal: NewsProposal, candidates: list[dict[str, str]]) -> None:
+        self.content_workflow.discover(project_id, self._identity(proposal), [item["url"] for item in candidates if item.get("url")])
 
     def discover(self, proposal: NewsProposal) -> SearchResultSet:
         return self.search_agent.discover(SearchRequest(proposal.title, proposal.query, proposal.required_terms))
@@ -270,18 +280,20 @@ class ResearchPipeline:
     def verify_candidates(self, proposal: NewsProposal, candidates: list[dict[str, str]]) -> VerificationResult:
         return self.verification_agent.verify(proposal, candidates)
 
-    def persist_result(self, project_id: int, claim_id: int, result: VerificationResult) -> None:
+    def persist_result(self, project_id: int, claim_id: int, proposal: NewsProposal, result: VerificationResult) -> None:
         for item in result.evidence:
             self.database.insert("evidence", project_id=project_id, claim_id=claim_id, source=item.url, excerpt=item.excerpt, created_at=now())
         with self.database.connect() as connection:
             connection.execute("UPDATE claims SET status = ? WHERE id = ?", (result.status, claim_id))
+        self.content_workflow.verify(project_id, self._identity(proposal), [{"domain": item.domain, "url": item.url} for item in result.evidence])
 
     def research(self, project_id: int, proposal: NewsProposal) -> VerificationResult:
         claim_id = self.start_claim(project_id, proposal)
         try:
             discovered = self.discover(proposal)
+            self.record_discovery(project_id, proposal, discovered.candidates)
             result = self.verify_candidates(proposal, discovered.candidates)
-            self.persist_result(project_id, claim_id, result)
+            self.persist_result(project_id, claim_id, proposal, result)
             return result
         except Exception as error:
             self.database.insert("failures", project_id=project_id, task_id=None, stage="web_research", error=str(error), created_at=now())

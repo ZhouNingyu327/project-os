@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -62,5 +63,10 @@ class EvidenceVerifierTest(unittest.TestCase):
             fetcher = FakeFetcher()
             pipeline = ResearchPipeline(db, self.verifier.registry, search=FakeSearch(), fetcher=fetcher)
             result = pipeline.research(project_id, self.proposal)
+            with db.connect() as conn:
+                candidate = conn.execute("SELECT status, discovery_sources_json, verification_json FROM content_candidates").fetchone()
         self.assertEqual(result.status, "verified")
         self.assertEqual(len(fetcher.urls), 2)
+        self.assertEqual(candidate["status"], "verified")
+        self.assertEqual(len(json.loads(candidate["discovery_sources_json"])), 2)
+        self.assertEqual(len(json.loads(candidate["verification_json"])), 2)
