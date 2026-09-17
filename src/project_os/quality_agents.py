@@ -71,6 +71,8 @@ class EvidenceAgent:
         manifest_rejected = int(metrics.get("stage_manifest_rejected", 0))
         manifest_missing = int(metrics.get("stage_manifest_missing", 0))
         manifest_unverified = int(metrics.get("stage_manifest_unverified", 0))
+        factual_total = int(metrics.get("factual_records", 0))
+        factual_without_sources = int(metrics.get("factual_records_without_sources", 0))
         findings: list[dict[str, object]] = []
         if unsourced:
             findings.append({"issue": "published_news_without_sources", "dimension": "evidence", "severity": 3, "covered": public_news - unsourced, "total": public_news})
@@ -86,6 +88,8 @@ class EvidenceAgent:
             findings.append({"issue": "stage_manifest_not_configured", "dimension": "evidence", "severity": 1})
         if manifest_total and (manifest_missing or manifest_unverified):
             findings.append({"issue": "stage_manifest_coverage_incomplete", "dimension": "evidence", "severity": 3, "covered": manifest_covered + manifest_rejected, "total": manifest_total, "missing": manifest_missing, "unverified": manifest_unverified})
+        if factual_without_sources:
+            findings.append({"issue": "factual_collections_missing_provenance", "dimension": "evidence", "severity": 2, "covered": factual_total - factual_without_sources, "total": factual_total})
         covered_units = public_news + stages
         covered_points = points + verified_stages + pending_stages * 0.45
         score = round(10 * covered_points / covered_units, 2) if covered_units else 0.0
@@ -93,6 +97,8 @@ class EvidenceAgent:
         # prevents a small, well-sourced subset from looking like a complete archive.
         if manifest_total:
             score = min(score, round(10 * (manifest_covered + manifest_rejected * 0.5) / manifest_total, 2))
+        if factual_total:
+            score = min(score, round(10 * (factual_total - factual_without_sources) / factual_total, 2))
         return AgentAssessment(self.name, self.dimension, score, 0.8 if report else 0.2, tuple(findings))
 
 

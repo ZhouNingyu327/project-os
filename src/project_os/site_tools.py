@@ -181,11 +181,25 @@ class ContentEvidenceTool:
             findings.append({"issue": "stage_archive_missing_sources", "severity": 2, "count": legacy_stages, "total": len(stages)})
         if pending_stages:
             findings.append({"issue": "stage_archive_needing_cross_check", "severity": 2, "count": pending_stages, "total": len(stages)})
+        # Other factual collections have different frontmatter schemas, but the
+        # provenance rule is universal. A platform link, event link, or sources
+        # array is counted as a traceable source; unlinked records are a bounded
+        # research backlog rather than silently trusted site copy.
+        generic_collections = ("awards", "biography", "discography", "events")
+        generic_total = generic_sourced = 0
+        for collection in generic_collections:
+            paths = list((root / "src" / "content" / collection).glob("*.mdx"))
+            generic_total += len(paths)
+            sourced = sum(bool(re.search(r"^\s*(?:-\s*)?(?:url|sourceUrl):\s*['\"]?https?://", path.read_text(encoding="utf-8"), flags=re.MULTILINE)) for path in paths)
+            generic_sourced += sourced
+            if len(paths) - sourced:
+                findings.append({"issue": "factual_collection_missing_provenance", "severity": 2, "collection": collection, "covered": sourced, "total": len(paths)})
         manifest_metrics, manifest_findings, manifest_limitations = self._stage_manifest_audit(root, stage_directory)
         findings.extend(manifest_findings)
         return ToolReport(self.name, "available", {
             "public_news": len(public_news), "verified_news": verified, "pending_news": pending, "unsourced_news": unsourced, "evidence_points": points,
             "stages": len(stages), "verified_stages": verified_stages, "pending_stages": pending_stages, "legacy_stages": legacy_stages,
+            "factual_records": generic_total, "factual_records_with_sources": generic_sourced, "factual_records_without_sources": generic_total - generic_sourced,
             **manifest_metrics,
         }, tuple(findings), ("Coverage is not a claim-level truth determination.", *manifest_limitations))
 

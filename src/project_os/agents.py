@@ -88,6 +88,7 @@ class TargetedImprovementAgent:
         "stage_manifest_coverage_incomplete": ("programme-inventory", "discovery-ocr", "web-search", "evidence-verifier"),
         "expected_stage_missing_from_archive": ("programme-inventory", "discovery-ocr", "web-search", "evidence-verifier"),
         "expected_stage_not_verified": ("web-search", "robots-aware-fetch", "evidence-verifier"),
+        "factual_collections_missing_provenance": ("content-inventory", "web-search", "robots-aware-fetch", "evidence-verifier"),
         "large_public_asset_budget": ("lighthouse", "asset-inventory", "image-optimizer"),
         "duplicate_splash_assets": ("playwright-screenshot", "asset-inventory", "source-editor"),
         "decorative_splash_images_need_empty_alt": ("accessibility-source", "source-editor"),
@@ -103,7 +104,7 @@ class TargetedImprovementAgent:
     def brief_for(self, finding: dict[str, object]) -> ImprovementBrief:
         issue = str(finding["issue"])
         dimension = str(finding.get("dimension", "quality"))
-        external = issue.startswith("published_news_") or issue.startswith("stage_manifest_") or issue.startswith("expected_stage_")
+        external = issue.startswith("published_news_") or issue.startswith("stage_manifest_") or issue.startswith("expected_stage_") or issue == "factual_collections_missing_provenance"
         tools = self._TOOL_HINTS.get(issue, ("repository-inventory", "source-editor"))
         if issue.startswith(("stage_manifest_", "expected_stage_")):
             objective = "Build or complete the programme inventory from discovery leads, then independently verify each unresolved stage identity before any archive draft is eligible for review."

@@ -40,3 +40,14 @@ class WebsiteToolchainTest(unittest.TestCase):
             self.assertEqual(report.metrics["stage_manifest_covered"], 1)
             self.assertEqual(report.metrics["stage_manifest_missing"], 1)
             self.assertTrue(any(item["issue"] == "expected_stage_missing_from_archive" for item in report.findings))
+
+    def test_factual_collections_without_urls_become_a_provenance_backlog(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            awards = root / "src" / "content" / "awards"
+            awards.mkdir(parents=True)
+            (awards / "unlinked.mdx").write_text("---\nawardName: Example\n---", encoding="utf-8")
+            (awards / "linked.mdx").write_text("---\nsources:\n  - url: https://official.test\n---", encoding="utf-8")
+            report = WebsiteToolchain().collect(root, "")["content-evidence"]
+            self.assertEqual(report.metrics["factual_records_without_sources"], 1)
+            self.assertTrue(any(item["issue"] == "factual_collection_missing_provenance" for item in report.findings))
