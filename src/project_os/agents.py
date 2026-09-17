@@ -84,6 +84,10 @@ class TargetedImprovementAgent:
     _TOOL_HINTS = {
         "published_news_without_sources": ("web-search", "robots-aware-fetch", "evidence-verifier"),
         "published_news_needing_cross_check": ("web-search", "robots-aware-fetch", "evidence-verifier"),
+        "stage_manifest_not_configured": ("programme-inventory", "discovery-ocr", "web-search", "evidence-verifier"),
+        "stage_manifest_coverage_incomplete": ("programme-inventory", "discovery-ocr", "web-search", "evidence-verifier"),
+        "expected_stage_missing_from_archive": ("programme-inventory", "discovery-ocr", "web-search", "evidence-verifier"),
+        "expected_stage_not_verified": ("web-search", "robots-aware-fetch", "evidence-verifier"),
         "large_public_asset_budget": ("lighthouse", "asset-inventory", "image-optimizer"),
         "duplicate_splash_assets": ("playwright-screenshot", "asset-inventory", "source-editor"),
         "decorative_splash_images_need_empty_alt": ("accessibility-source", "source-editor"),
@@ -99,18 +103,20 @@ class TargetedImprovementAgent:
     def brief_for(self, finding: dict[str, object]) -> ImprovementBrief:
         issue = str(finding["issue"])
         dimension = str(finding.get("dimension", "quality"))
-        external = issue.startswith("published_news_")
+        external = issue.startswith("published_news_") or issue.startswith("stage_manifest_") or issue.startswith("expected_stage_")
         tools = self._TOOL_HINTS.get(issue, ("repository-inventory", "source-editor"))
-        objective = (
-            "Collect two independent high-trust sources and verify each affected published claim before drafting a correction."
-            if external else f"Resolve {issue} without reducing protected quality dimensions."
-        )
+        if issue.startswith(("stage_manifest_", "expected_stage_")):
+            objective = "Build or complete the programme inventory from discovery leads, then independently verify each unresolved stage identity before any archive draft is eligible for review."
+        elif external:
+            objective = "Collect two independent high-trust sources and verify each affected published claim before drafting a correction."
+        else:
+            objective = f"Resolve {issue} without reducing protected quality dimensions."
         return ImprovementBrief(issue, dimension, int(finding.get("severity", 1)), objective, tools, external)
 
     def propose_local_repair(self, source: str, findings: tuple[dict[str, object], ...]) -> Improvement | None:
         # Facts and externally researched text are intentionally excluded here.
         # The existing research pipeline handles them as verified drafts.
-        safe_findings = [item for item in findings if not str(item["issue"]).startswith("published_news_")]
+        safe_findings = [item for item in findings if not (str(item["issue"]).startswith("published_news_") or str(item["issue"]).startswith("stage_manifest_") or str(item["issue"]).startswith("expected_stage_"))]
         return self.improver.improve(source, safe_findings)
 
     def collect_verified_evidence(self, project_id: int, proposal: Any) -> Any:

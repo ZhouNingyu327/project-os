@@ -80,6 +80,71 @@ class AccessibilitySourceTool:
 class ContentEvidenceTool:
     name = "content-evidence"
 
+    @staticmethod
+    def _normalise(value: object) -> str:
+        """Make a conservative, formatting-insensitive identity comparison."""
+        return re.sub(r"[^\w\u4e00-\u9fff]", "", str(value).casefold())
+
+    def _stage_manifest_audit(self, root: Path, stage_directory: Path) -> tuple[dict[str, int | str], list[dict[str, object]], list[str]]:
+        """Compare archive files with a project-owned expected-stage inventory.
+
+        The manifest is deliberately data, not a hard-coded artist catalogue.
+        Discovery sources (including social posts and OCR) can propose entries,
+        but an entry is only covered when its matching archive file is verified
+        and contains a source URL.  A researched negative result is permitted
+        only when it records a rejection reason, so coverage cannot be inflated
+        by silently dropping difficult candidates.
+        """
+        manifest = root / ".project-os" / "stage-manifest.json"
+        empty = {"stage_manifest_entries": 0, "stage_manifest_covered": 0, "stage_manifest_rejected": 0, "stage_manifest_missing": 0, "stage_manifest_unverified": 0}
+        if not manifest.exists():
+            return {**empty, "stage_manifest_status": "not_configured"}, [{"issue": "stage_manifest_not_configured", "severity": 1}], ("No expected-stage manifest is configured; archive completeness cannot be claimed.",)
+        try:
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            entries = payload["stages"]
+            if not isinstance(entries, list):
+                raise ValueError("'stages' must be an array")
+        except (OSError, json.JSONDecodeError, KeyError, ValueError) as error:
+            return {**empty, "stage_manifest_status": "invalid"}, [{"issue": "stage_manifest_invalid", "severity": 3}], (f"Stage manifest could not be read: {error}",)
+
+        covered = rejected = missing = unverified = 0
+        findings: list[dict[str, object]] = []
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("id"), str):
+                findings.append({"issue": "stage_manifest_invalid_entry", "severity": 3})
+                continue
+            identifier = entry["id"]
+            if entry.get("resolution") == "rejected":
+                if isinstance(entry.get("rejectionReason"), str) and entry["rejectionReason"].strip():
+                    rejected += 1
+                else:
+                    findings.append({"issue": "stage_manifest_rejection_without_reason", "severity": 3, "id": identifier})
+                    missing += 1
+                continue
+            path = stage_directory / f"{identifier}.mdx"
+            if not path.is_file():
+                missing += 1
+                findings.append({"issue": "expected_stage_missing_from_archive", "severity": 3, "id": identifier})
+                continue
+            text = path.read_text(encoding="utf-8")
+            required_identity = entry.get("identity", {})
+            expected_tokens = required_identity.values() if isinstance(required_identity, dict) else ()
+            identity_matches = all(self._normalise(token) in self._normalise(text) for token in expected_tokens if str(token).strip())
+            is_verified = "verificationStatus: verified" in text and bool(re.search(r"^\s*(?:-\s*)?url:\s*['\"]?https?://", text, flags=re.MULTILINE))
+            if is_verified and identity_matches:
+                covered += 1
+            else:
+                unverified += 1
+                findings.append({"issue": "expected_stage_not_verified", "severity": 2, "id": identifier, "identity_matches": identity_matches})
+        metrics: dict[str, int | str] = {
+            "stage_manifest_entries": len(entries), "stage_manifest_covered": covered,
+            "stage_manifest_rejected": rejected, "stage_manifest_missing": missing,
+            "stage_manifest_unverified": unverified, "stage_manifest_status": "available",
+        }
+        if missing or unverified:
+            findings.append({"issue": "stage_manifest_coverage_incomplete", "severity": 3, "covered": covered + rejected, "total": len(entries), "missing": missing, "unverified": unverified})
+        return metrics, findings, ("Manifest entries are resolved only by a verified matching archive record or a documented negative research result.",)
+
     def collect(self, root: Path, _: str) -> ToolReport:
         directory = root / "src" / "content" / "news"
         all_news = list(directory.glob("*.mdx")) if directory.exists() else []
@@ -116,10 +181,13 @@ class ContentEvidenceTool:
             findings.append({"issue": "stage_archive_missing_sources", "severity": 2, "count": legacy_stages, "total": len(stages)})
         if pending_stages:
             findings.append({"issue": "stage_archive_needing_cross_check", "severity": 2, "count": pending_stages, "total": len(stages)})
+        manifest_metrics, manifest_findings, manifest_limitations = self._stage_manifest_audit(root, stage_directory)
+        findings.extend(manifest_findings)
         return ToolReport(self.name, "available", {
             "public_news": len(public_news), "verified_news": verified, "pending_news": pending, "unsourced_news": unsourced, "evidence_points": points,
             "stages": len(stages), "verified_stages": verified_stages, "pending_stages": pending_stages, "legacy_stages": legacy_stages,
-        }, tuple(findings), ("Coverage is not a claim-level truth determination.",))
+            **manifest_metrics,
+        }, tuple(findings), ("Coverage is not a claim-level truth determination.", *manifest_limitations))
 
 
 class AssetPerformanceTool:

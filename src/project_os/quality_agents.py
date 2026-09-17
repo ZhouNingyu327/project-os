@@ -66,6 +66,11 @@ class EvidenceAgent:
         verified_stages = int(metrics.get("verified_stages", 0))
         pending_stages = int(metrics.get("pending_stages", 0))
         legacy_stages = int(metrics.get("legacy_stages", 0))
+        manifest_total = int(metrics.get("stage_manifest_entries", 0))
+        manifest_covered = int(metrics.get("stage_manifest_covered", 0))
+        manifest_rejected = int(metrics.get("stage_manifest_rejected", 0))
+        manifest_missing = int(metrics.get("stage_manifest_missing", 0))
+        manifest_unverified = int(metrics.get("stage_manifest_unverified", 0))
         findings: list[dict[str, object]] = []
         if unsourced:
             findings.append({"issue": "published_news_without_sources", "dimension": "evidence", "severity": 3, "covered": public_news - unsourced, "total": public_news})
@@ -77,9 +82,17 @@ class EvidenceAgent:
             findings.append({"issue": "stage_archive_missing_sources", "dimension": "evidence", "severity": 2, "covered": verified_stages + pending_stages, "total": stages})
         if pending_stages:
             findings.append({"issue": "stage_archive_needing_cross_check", "dimension": "evidence", "severity": 2, "pending": pending_stages, "total": stages})
+        if metrics.get("stage_manifest_status") == "not_configured":
+            findings.append({"issue": "stage_manifest_not_configured", "dimension": "evidence", "severity": 1})
+        if manifest_total and (manifest_missing or manifest_unverified):
+            findings.append({"issue": "stage_manifest_coverage_incomplete", "dimension": "evidence", "severity": 3, "covered": manifest_covered + manifest_rejected, "total": manifest_total, "missing": manifest_missing, "unverified": manifest_unverified})
         covered_units = public_news + stages
         covered_points = points + verified_stages + pending_stages * 0.45
         score = round(10 * covered_points / covered_units, 2) if covered_units else 0.0
+        # An explicit incomplete expected inventory caps evidence confidence. It
+        # prevents a small, well-sourced subset from looking like a complete archive.
+        if manifest_total:
+            score = min(score, round(10 * (manifest_covered + manifest_rejected * 0.5) / manifest_total, 2))
         return AgentAssessment(self.name, self.dimension, score, 0.8 if report else 0.2, tuple(findings))
 
 

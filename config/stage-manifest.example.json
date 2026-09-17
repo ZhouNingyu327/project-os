@@ -1,0 +1,18 @@
+{
+  "stages": [
+    {
+      "id": "example-show-episode-1-song",
+      "identity": {
+        "show": "Example Show",
+        "episode": "Episode 1",
+        "song": "Example Song",
+        "partner": "Example Partner"
+      }
+    },
+    {
+      "id": "candidate-with-no-supported-record",
+      "resolution": "rejected",
+      "rejectionReason": "Two independent trusted sources did not support a performance record."
+    }
+  ]
+}

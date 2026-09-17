@@ -19,6 +19,7 @@ Project OS is an early V0.3 reference implementation. It makes every run traceab
 - A policy gate with explicit protected dimensions and validation requirements; approval is not a model judgment.
 - Seven independent, read-only quality agents—correctness, evidence, usability, visual structure, originality, performance and consistency—plus a Meta Evaluator that only aggregates their results.
 - Tool-backed observations: repository, content-evidence, accessibility-source, asset-performance and design-system inventory tools run locally; optional Playwright screenshots and Lighthouse reports raise runtime confidence when configured.
+- Archive-completeness manifests: a project-owned expected-stage inventory prevents a well-sourced subset of records from being misreported as a complete programme archive.
 - A workspace-scoped, optimistic-concurrency change-set applier for future multi-file coding agents.
 - An isolated multi-file worktree verifier that applies a whole candidate change set before running configured build or test commands.
 
@@ -95,6 +96,37 @@ project-os evolve-fansite-preview \
 ```
 
 The included profile name is historical; treat it as an example adapter and replace it with a profile for your own website.
+
+### Verifying a finite archive
+
+For a programme, season, discography, or other bounded collection, copy
+[`config/stage-manifest.example.json`](config/stage-manifest.example.json) to
+`.project-os/stage-manifest.json` in the target site before declaring the
+archive complete. Entries use a stable archive filename plus identity fields;
+the evaluator verifies the matched MDX has a verified status and a source URL.
+Discovery posts, screenshots, and OCR may populate this checklist, but they are
+never sufficient evidence to publish an entry.
+
+```json
+{
+  "stages": [
+    {
+      "id": "2020-voice-example",
+      "identity": {"show": "Example show", "episode": "Episode 1", "song": "Example song"}
+    },
+    {
+      "id": "unconfirmed-example",
+      "resolution": "rejected",
+      "rejectionReason": "Two trusted sources found no performance record."
+    }
+  ]
+}
+```
+
+An expected entry is resolved only when its verified, identity-matching archive
+record exists, or when a negative research outcome is recorded with a reason.
+The Evidence Agent caps its score while this manifest is incomplete and routes
+the gap to the discovery → cross-check → verification workflow.
 
 ## Research boundary
 

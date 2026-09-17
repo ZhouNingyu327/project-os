@@ -15,6 +15,15 @@ class PendingEvidenceEvaluator:
 
 
 class SupervisorAgentTest(unittest.TestCase):
+    def test_stage_manifest_gap_is_a_research_brief_not_a_local_content_edit(self) -> None:
+        from project_os.agents import TargetedImprovementAgent
+        from project_os.fansite_profile import FansiteImprover
+
+        brief = TargetedImprovementAgent(FansiteImprover()).brief_for({"issue": "stage_manifest_coverage_incomplete", "dimension": "evidence", "severity": 3})
+        self.assertTrue(brief.requires_external_evidence)
+        self.assertIn("programme-inventory", brief.suggested_tools)
+        self.assertIn("verify each unresolved stage identity", brief.objective)
+
     def test_supervisor_routes_evidence_gap_to_research_without_writing_content(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

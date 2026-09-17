@@ -1,4 +1,5 @@
 import unittest
+import json
 from pathlib import Path
 import tempfile
 
@@ -52,3 +53,18 @@ class FansiteEvaluatorTest(unittest.TestCase):
             self.assertEqual(report.evidence_score, 7.25)
             self.assertTrue(any(item["issue"] == "published_news_needing_cross_check" for item in report.evidence))
             self.assertFalse(any(item["issue"] == "published_news_without_sources" for item in report.evidence))
+
+    def test_incomplete_manifest_caps_evidence_score_and_surfaces_a_research_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stages = root / "src" / "content" / "stages"
+            stages.mkdir(parents=True)
+            (root / ".project-os").mkdir()
+            (stages / "covered.mdx").write_text("---\nshow: Example\nverificationStatus: verified\nsources:\n  - url: https://official.test\n---", encoding="utf-8")
+            (root / ".project-os" / "stage-manifest.json").write_text(json.dumps({"stages": [
+                {"id": "covered", "identity": {"show": "Example"}},
+                {"id": "not-yet-found", "identity": {"show": "Example"}},
+            ]}), encoding="utf-8")
+            report = FansiteEvaluator(root).evaluate(LAYOUT)
+            self.assertEqual(report.evidence_score, 5.0)
+            self.assertTrue(any(item["issue"] == "stage_manifest_coverage_incomplete" for item in report.evidence))
