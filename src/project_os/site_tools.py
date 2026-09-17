@@ -100,7 +100,26 @@ class ContentEvidenceTool:
             findings.append({"issue": "published_news_without_sources", "severity": 3, "count": unsourced})
         if pending:
             findings.append({"issue": "published_news_needing_cross_check", "severity": 2, "count": pending})
-        return ToolReport(self.name, "available", {"public_news": len(public_news), "verified_news": verified, "pending_news": pending, "unsourced_news": unsourced, "evidence_points": points}, tuple(findings), ("Coverage is not a claim-level truth determination.",))
+        stage_directory = root / "src" / "content" / "stages"
+        stages = list(stage_directory.glob("*.mdx")) if stage_directory.exists() else []
+        verified_stages = pending_stages = legacy_stages = 0
+        for path in stages:
+            text = path.read_text(encoding="utf-8")
+            has_source = bool(re.search(r"^\s*(?:-\s*)?url:\s*['\"]?https?://", text, flags=re.MULTILINE))
+            if "verificationStatus: verified" in text and has_source:
+                verified_stages += 1
+            elif has_source or "verificationStatus: needs_review" in text:
+                pending_stages += 1
+            else:
+                legacy_stages += 1
+        if legacy_stages:
+            findings.append({"issue": "stage_archive_missing_sources", "severity": 2, "count": legacy_stages, "total": len(stages)})
+        if pending_stages:
+            findings.append({"issue": "stage_archive_needing_cross_check", "severity": 2, "count": pending_stages, "total": len(stages)})
+        return ToolReport(self.name, "available", {
+            "public_news": len(public_news), "verified_news": verified, "pending_news": pending, "unsourced_news": unsourced, "evidence_points": points,
+            "stages": len(stages), "verified_stages": verified_stages, "pending_stages": pending_stages, "legacy_stages": legacy_stages,
+        }, tuple(findings), ("Coverage is not a claim-level truth determination.",))
 
 
 class AssetPerformanceTool:

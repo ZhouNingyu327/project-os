@@ -62,6 +62,10 @@ class EvidenceAgent:
         pending = int(metrics.get("pending_news", 0))
         unsourced = int(metrics.get("unsourced_news", 0))
         points = float(metrics.get("evidence_points", 0))
+        stages = int(metrics.get("stages", 0))
+        verified_stages = int(metrics.get("verified_stages", 0))
+        pending_stages = int(metrics.get("pending_stages", 0))
+        legacy_stages = int(metrics.get("legacy_stages", 0))
         findings: list[dict[str, object]] = []
         if unsourced:
             findings.append({"issue": "published_news_without_sources", "dimension": "evidence", "severity": 3, "covered": public_news - unsourced, "total": public_news})
@@ -69,7 +73,13 @@ class EvidenceAgent:
             findings.append({"issue": "published_news_needing_cross_check", "dimension": "evidence", "severity": 2, "pending": pending, "verified": verified, "total": public_news})
         if not public_news:
             findings.append({"issue": "no_news_evidence_to_assess", "dimension": "evidence", "severity": 3})
-        score = round(10 * points / public_news, 2) if public_news else 0.0
+        if legacy_stages:
+            findings.append({"issue": "stage_archive_missing_sources", "dimension": "evidence", "severity": 2, "covered": verified_stages + pending_stages, "total": stages})
+        if pending_stages:
+            findings.append({"issue": "stage_archive_needing_cross_check", "dimension": "evidence", "severity": 2, "pending": pending_stages, "total": stages})
+        covered_units = public_news + stages
+        covered_points = points + verified_stages + pending_stages * 0.45
+        score = round(10 * covered_points / covered_units, 2) if covered_units else 0.0
         return AgentAssessment(self.name, self.dimension, score, 0.8 if report else 0.2, tuple(findings))
 
 
