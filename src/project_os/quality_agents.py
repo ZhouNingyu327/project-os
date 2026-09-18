@@ -77,13 +77,13 @@ class EvidenceAgent:
         if unsourced:
             findings.append({"issue": "published_news_without_sources", "dimension": "evidence", "severity": 3, "covered": public_news - unsourced, "total": public_news})
         if pending:
-            findings.append({"issue": "published_news_needing_cross_check", "dimension": "evidence", "severity": 2, "pending": pending, "verified": verified, "total": public_news})
+            findings.append({"issue": "published_news_needing_cross_check", "dimension": "evidence", "severity": 2, "pending": pending, "covered": verified, "total": public_news})
         if not public_news:
             findings.append({"issue": "no_news_evidence_to_assess", "dimension": "evidence", "severity": 3})
         if legacy_stages:
             findings.append({"issue": "stage_archive_missing_sources", "dimension": "evidence", "severity": 2, "covered": verified_stages + pending_stages, "total": stages})
         if pending_stages:
-            findings.append({"issue": "stage_archive_needing_cross_check", "dimension": "evidence", "severity": 2, "pending": pending_stages, "total": stages})
+            findings.append({"issue": "stage_archive_needing_cross_check", "dimension": "evidence", "severity": 2, "pending": pending_stages, "covered": verified_stages, "total": stages})
         if metrics.get("stage_manifest_status") == "not_configured":
             findings.append({"issue": "stage_manifest_not_configured", "dimension": "evidence", "severity": 1})
         if manifest_total and (manifest_missing or manifest_unverified):

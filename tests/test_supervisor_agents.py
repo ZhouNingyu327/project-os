@@ -34,6 +34,11 @@ class SupervisorAgentTest(unittest.TestCase):
         self.assertEqual(brief.scope, "discography")
         self.assertIn("discography collection", brief.objective)
 
+    def test_stage_cross_check_is_an_external_evidence_task(self) -> None:
+        brief = TargetedImprovementAgent(FansiteImprover()).brief_for({"issue": "stage_archive_needing_cross_check", "dimension": "evidence", "severity": 2, "covered": 24, "pending": 65, "total": 89})
+        self.assertTrue(brief.requires_external_evidence)
+        self.assertIn("evidence-verifier", brief.suggested_tools)
+
     def test_stage_manifest_gap_is_a_research_brief_not_a_local_content_edit(self) -> None:
         from project_os.agents import TargetedImprovementAgent
         from project_os.fansite_profile import FansiteImprover

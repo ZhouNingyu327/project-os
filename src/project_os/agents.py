@@ -100,6 +100,8 @@ class TargetedImprovementAgent:
     _TOOL_HINTS = {
         "published_news_without_sources": ("web-search", "robots-aware-fetch", "evidence-verifier"),
         "published_news_needing_cross_check": ("web-search", "robots-aware-fetch", "evidence-verifier"),
+        "stage_archive_missing_sources": ("programme-inventory", "discovery-ocr", "web-search", "evidence-verifier"),
+        "stage_archive_needing_cross_check": ("web-search", "robots-aware-fetch", "evidence-verifier"),
         "stage_manifest_not_configured": ("programme-inventory", "discovery-ocr", "web-search", "evidence-verifier"),
         "stage_manifest_coverage_incomplete": ("programme-inventory", "discovery-ocr", "web-search", "evidence-verifier"),
         "expected_stage_missing_from_archive": ("programme-inventory", "discovery-ocr", "web-search", "evidence-verifier"),
@@ -120,9 +122,9 @@ class TargetedImprovementAgent:
     def brief_for(self, finding: dict[str, object]) -> ImprovementBrief:
         issue = str(finding["issue"])
         dimension = str(finding.get("dimension", "quality"))
-        external = issue.startswith("published_news_") or issue.startswith("stage_manifest_") or issue.startswith("expected_stage_") or issue == "factual_collections_missing_provenance"
+        external = issue.startswith("published_news_") or issue.startswith("stage_archive_") or issue.startswith("stage_manifest_") or issue.startswith("expected_stage_") or issue == "factual_collections_missing_provenance"
         tools = self._TOOL_HINTS.get(issue, ("repository-inventory", "source-editor"))
-        if issue.startswith(("stage_manifest_", "expected_stage_")):
+        if issue.startswith(("stage_archive_", "stage_manifest_", "expected_stage_")):
             objective = "Build or complete the programme inventory from discovery leads, then independently verify each unresolved stage identity before any archive draft is eligible for review."
         elif external:
             objective = "Collect two independent high-trust sources and verify each affected published claim before drafting a correction."
