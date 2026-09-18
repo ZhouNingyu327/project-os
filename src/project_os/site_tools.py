@@ -80,6 +80,16 @@ class AccessibilitySourceTool:
 class ContentEvidenceTool:
     name = "content-evidence"
 
+    # Content frontmatter permits both block YAML and compact inline mappings,
+    # e.g. ``sources: [{name: Official, url: "https://…"}]``.  Evidence
+    # collection must treat those equivalent; otherwise a sourced record is
+    # incorrectly routed to the missing-source repair path.
+    _SOURCE_URL_PATTERN = re.compile(r"\b(?:sourceUrl|url)\s*:\s*['\"]?(https?://[^\s,'\"}\]]+)", re.IGNORECASE)
+
+    @classmethod
+    def _source_urls(cls, text: str) -> list[str]:
+        return cls._SOURCE_URL_PATTERN.findall(text)
+
     @staticmethod
     def _normalise(value: object) -> str:
         """Make a conservative, formatting-insensitive identity comparison."""
@@ -130,7 +140,7 @@ class ContentEvidenceTool:
             required_identity = entry.get("identity", {})
             expected_tokens = required_identity.values() if isinstance(required_identity, dict) else ()
             identity_matches = all(self._normalise(token) in self._normalise(text) for token in expected_tokens if str(token).strip())
-            is_verified = "verificationStatus: verified" in text and bool(re.search(r"^\s*(?:-\s*)?url:\s*['\"]?https?://", text, flags=re.MULTILINE))
+            is_verified = "verificationStatus: verified" in text and bool(self._source_urls(text))
             if is_verified and identity_matches:
                 covered += 1
             else:
@@ -153,7 +163,7 @@ class ContentEvidenceTool:
         points = 0.0
         for path in public_news:
             text = path.read_text(encoding="utf-8")
-            sources = len(re.findall(r"^\s*(?:-\s*)?(?:sourceUrl|url):\s*['\"]?https?://", text, flags=re.MULTILINE))
+            sources = len(self._source_urls(text))
             if "verificationStatus: 'verified'" in text and sources >= 2:
                 verified += 1; points += 1.0
             elif sources:
@@ -170,7 +180,7 @@ class ContentEvidenceTool:
         verified_stages = pending_stages = legacy_stages = 0
         for path in stages:
             text = path.read_text(encoding="utf-8")
-            has_source = bool(re.search(r"^\s*(?:-\s*)?url:\s*['\"]?https?://", text, flags=re.MULTILINE))
+            has_source = bool(self._source_urls(text))
             if "verificationStatus: verified" in text and has_source:
                 verified_stages += 1
             elif has_source or "verificationStatus: needs_review" in text:
@@ -190,7 +200,7 @@ class ContentEvidenceTool:
         for collection in generic_collections:
             paths = list((root / "src" / "content" / collection).glob("*.mdx"))
             generic_total += len(paths)
-            sourced = sum(bool(re.search(r"^\s*(?:-\s*)?(?:url|sourceUrl):\s*['\"]?https?://", path.read_text(encoding="utf-8"), flags=re.MULTILINE)) for path in paths)
+            sourced = sum(bool(self._source_urls(path.read_text(encoding="utf-8"))) for path in paths)
             generic_sourced += sourced
             if len(paths) - sourced:
                 findings.append({"issue": "factual_collection_missing_provenance", "severity": 2, "collection": collection, "covered": sourced, "total": len(paths)})

@@ -51,3 +51,16 @@ class WebsiteToolchainTest(unittest.TestCase):
             report = WebsiteToolchain().collect(root, "")["content-evidence"]
             self.assertEqual(report.metrics["factual_records_without_sources"], 1)
             self.assertTrue(any(item["issue"] == "factual_collection_missing_provenance" for item in report.findings))
+
+    def test_inline_source_mapping_is_not_misclassified_as_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            stages = root / "src" / "content" / "stages"
+            stages.mkdir(parents=True)
+            (stages / "inline.mdx").write_text(
+                '---\nverificationStatus: needs_review\nsources: [{ name: "Archive", url: "https://archive.test/item" }]\n---',
+                encoding="utf-8",
+            )
+            report = WebsiteToolchain().collect(root, "")["content-evidence"]
+            self.assertEqual(report.metrics["legacy_stages"], 0)
+            self.assertEqual(report.metrics["pending_stages"], 1)
