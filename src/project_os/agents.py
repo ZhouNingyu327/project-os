@@ -44,6 +44,7 @@ class ImprovementBrief:
     objective: str
     suggested_tools: tuple[str, ...]
     requires_external_evidence: bool
+    scope: str | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -53,6 +54,7 @@ class ImprovementBrief:
             "objective": self.objective,
             "suggested_tools": list(self.suggested_tools),
             "requires_external_evidence": self.requires_external_evidence,
+            "scope": self.scope,
         }
 
 
@@ -66,7 +68,21 @@ class QualityAssessmentAgent:
 
     def assess(self, source: str) -> Assessment:
         report = self.evaluator.evaluate(source)
-        findings = tuple(sorted(report.evidence, key=lambda item: int(item.get("severity", 0)), reverse=True))
+        def priority(item: dict[str, object]) -> tuple[object, ...]:
+            """Rank urgent gaps by severity, then by lowest verified coverage.
+
+            This deliberately prevents findings from winning merely because a
+            tool happened to emit them first.  Missing coverage is kept ahead
+            of an equal-severity review backlog, while stable identifiers make
+            repeated runs deterministic.
+            """
+            total = int(item.get("total", 0))
+            covered = int(item.get("covered", item.get("verified", 0)))
+            missing = int(item.get("missing", item.get("pending", max(0, total - covered))))
+            coverage = covered / total if total else 1.0
+            return (-int(item.get("severity", 0)), coverage, -missing, -total, str(item.get("issue", "")), str(item.get("collection", "")))
+
+        findings = tuple(sorted(report.evidence, key=priority))
         return Assessment(report, findings)
 
 
@@ -112,7 +128,10 @@ class TargetedImprovementAgent:
             objective = "Collect two independent high-trust sources and verify each affected published claim before drafting a correction."
         else:
             objective = f"Resolve {issue} without reducing protected quality dimensions."
-        return ImprovementBrief(issue, dimension, int(finding.get("severity", 1)), objective, tools, external)
+        scope = str(finding.get("collection", "")).strip() or None
+        if scope:
+            objective = f"For the {scope} collection: {objective}"
+        return ImprovementBrief(issue, dimension, int(finding.get("severity", 1)), objective, tools, external, scope)
 
     def propose_local_repair(self, source: str, findings: tuple[dict[str, object], ...]) -> Improvement | None:
         # Facts and externally researched text are intentionally excluded here.

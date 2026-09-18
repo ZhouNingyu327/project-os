@@ -88,8 +88,24 @@ class EvidenceAgent:
             findings.append({"issue": "stage_manifest_not_configured", "dimension": "evidence", "severity": 1})
         if manifest_total and (manifest_missing or manifest_unverified):
             findings.append({"issue": "stage_manifest_coverage_incomplete", "dimension": "evidence", "severity": 3, "covered": manifest_covered + manifest_rejected, "total": manifest_total, "missing": manifest_missing, "unverified": manifest_unverified})
-        if factual_without_sources:
-            findings.append({"issue": "factual_collections_missing_provenance", "dimension": "evidence", "severity": 2, "covered": factual_total - factual_without_sources, "total": factual_total})
+        # Keep factual provenance gaps scoped to their collection.  An aggregate
+        # count is useful for the score, but it loses the context the research
+        # worker needs and lets a large archive hide a much weaker collection.
+        if report:
+            for item in report.findings:
+                if item.get("issue") != "factual_collection_missing_provenance":
+                    continue
+                covered = int(item.get("covered", 0))
+                total = int(item.get("total", 0))
+                findings.append({
+                    "issue": "factual_collections_missing_provenance",
+                    "dimension": "evidence",
+                    "severity": int(item.get("severity", 2)),
+                    "collection": str(item.get("collection", "")),
+                    "covered": covered,
+                    "missing": max(0, total - covered),
+                    "total": total,
+                })
         covered_units = public_news + stages
         covered_points = points + verified_stages + pending_stages * 0.45
         score = round(10 * covered_points / covered_units, 2) if covered_units else 0.0

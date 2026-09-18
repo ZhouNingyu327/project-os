@@ -6,6 +6,8 @@ from project_os.database import Database
 from project_os.evaluators import QualityReport
 from project_os.research import ResearchPipeline, SourceRegistry
 from project_os.workflow import SupervisorAgent
+from project_os.agents import QualityAssessmentAgent, TargetedImprovementAgent
+from project_os.fansite_profile import FansiteImprover
 
 
 class PendingEvidenceEvaluator:
@@ -15,6 +17,23 @@ class PendingEvidenceEvaluator:
 
 
 class SupervisorAgentTest(unittest.TestCase):
+    def test_collection_gap_outranks_equal_severity_stage_review_and_preserves_scope(self) -> None:
+        class CoverageEvaluator:
+            def evaluate(self, _: str) -> QualityReport:
+                return QualityReport(
+                    "test", 6, 8, 8, 8, 8,
+                    [
+                        {"issue": "stage_archive_needing_cross_check", "dimension": "evidence", "severity": 2, "covered": 24, "pending": 65, "total": 89},
+                        {"issue": "factual_collections_missing_provenance", "dimension": "evidence", "severity": 2, "collection": "discography", "covered": 7, "missing": 84, "total": 91},
+                    ], evidence_score=3, originality=8, consistency=8,
+                )
+
+        assessment = QualityAssessmentAgent(CoverageEvaluator()).assess("source")
+        self.assertEqual(assessment.findings[0]["collection"], "discography")
+        brief = TargetedImprovementAgent(FansiteImprover()).brief_for(assessment.findings[0])
+        self.assertEqual(brief.scope, "discography")
+        self.assertIn("discography collection", brief.objective)
+
     def test_stage_manifest_gap_is_a_research_brief_not_a_local_content_edit(self) -> None:
         from project_os.agents import TargetedImprovementAgent
         from project_os.fansite_profile import FansiteImprover
