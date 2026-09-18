@@ -73,6 +73,7 @@ class EvidenceAgent:
         manifest_unverified = int(metrics.get("stage_manifest_unverified", 0))
         factual_total = int(metrics.get("factual_records", 0))
         factual_without_sources = int(metrics.get("factual_records_without_sources", 0))
+        factual_verified = int(metrics.get("factual_records_verified", factual_total - factual_without_sources))
         findings: list[dict[str, object]] = []
         if unsourced:
             findings.append({"issue": "published_news_without_sources", "dimension": "evidence", "severity": 3, "covered": public_news - unsourced, "total": public_news})
@@ -106,6 +107,18 @@ class EvidenceAgent:
                     "missing": max(0, total - covered),
                     "total": total,
                 })
+            for item in report.findings:
+                if item.get("issue") != "factual_collection_needing_cross_check":
+                    continue
+                findings.append({
+                    "issue": "factual_collections_needing_cross_check",
+                    "dimension": "evidence",
+                    "severity": int(item.get("severity", 2)),
+                    "collection": str(item.get("collection", "")),
+                    "covered": int(item.get("covered", 0)),
+                    "pending": int(item.get("pending", 0)),
+                    "total": int(item.get("total", 0)),
+                })
         covered_units = public_news + stages
         covered_points = points + verified_stages + pending_stages * 0.45
         score = round(10 * covered_points / covered_units, 2) if covered_units else 0.0
@@ -114,7 +127,7 @@ class EvidenceAgent:
         if manifest_total:
             score = min(score, round(10 * (manifest_covered + manifest_rejected * 0.5) / manifest_total, 2))
         if factual_total:
-            score = min(score, round(10 * (factual_total - factual_without_sources) / factual_total, 2))
+            score = min(score, round(10 * factual_verified / factual_total, 2))
         return AgentAssessment(self.name, self.dimension, score, 0.8 if report else 0.2, tuple(findings))
 
 

@@ -215,7 +215,7 @@ class ContentEvidenceTool:
         # array is counted as a traceable source; unlinked records are a bounded
         # research backlog rather than silently trusted site copy.
         generic_collections = ("awards", "biography", "discography", "events")
-        generic_total = generic_sourced = inherited_sourced = 0
+        generic_total = generic_sourced = generic_verified = generic_pending = inherited_sourced = 0
         for collection in generic_collections:
             paths = list((root / "src" / "content" / collection).glob("*.mdx"))
             generic_total += len(paths)
@@ -225,9 +225,13 @@ class ContentEvidenceTool:
             sourced_release_tracks: set[str] = set()
             if collection == "discography":
                 for _, text in records:
-                    if self._source_urls(text):
+                    if self._source_urls(text) and self._frontmatter_scalar(text, "verificationStatus") == "verified":
                         sourced_release_tracks.update(self._frontmatter_track_names(text))
             direct = sum(bool(self._source_urls(text)) for _, text in records)
+            direct_verified = sum(
+                bool(self._source_urls(text)) and self._frontmatter_scalar(text, "verificationStatus") == "verified"
+                for _, text in records
+            )
             inherited = sum(
                 not self._source_urls(text)
                 and self._frontmatter_scalar(text, "title") in sourced_release_tracks
@@ -235,15 +239,21 @@ class ContentEvidenceTool:
             ) if collection == "discography" else 0
             sourced = direct + inherited
             generic_sourced += sourced
+            verified_records = direct_verified + inherited
+            generic_verified += verified_records
+            pending_records = direct - direct_verified
+            generic_pending += pending_records
             inherited_sourced += inherited
             if len(paths) - sourced:
                 findings.append({"issue": "factual_collection_missing_provenance", "severity": 2, "collection": collection, "covered": sourced, "total": len(paths), "inherited": inherited})
+            if pending_records:
+                findings.append({"issue": "factual_collection_needing_cross_check", "severity": 2, "collection": collection, "covered": verified_records, "pending": pending_records, "total": len(paths), "inherited": inherited})
         manifest_metrics, manifest_findings, manifest_limitations = self._stage_manifest_audit(root, stage_directory)
         findings.extend(manifest_findings)
         return ToolReport(self.name, "available", {
             "public_news": len(public_news), "verified_news": verified, "pending_news": pending, "unsourced_news": unsourced, "evidence_points": points,
             "stages": len(stages), "verified_stages": verified_stages, "pending_stages": pending_stages, "legacy_stages": legacy_stages,
-            "factual_records": generic_total, "factual_records_with_sources": generic_sourced, "factual_records_with_inherited_sources": inherited_sourced, "factual_records_without_sources": generic_total - generic_sourced,
+            "factual_records": generic_total, "factual_records_with_sources": generic_sourced, "factual_records_verified": generic_verified, "factual_records_needing_cross_check": generic_pending, "factual_records_with_inherited_sources": inherited_sourced, "factual_records_without_sources": generic_total - generic_sourced,
             **manifest_metrics,
         }, tuple(findings), ("Coverage is not a claim-level truth determination.", *manifest_limitations))
 
