@@ -91,6 +91,25 @@ class ContentEvidenceTool:
         return cls._SOURCE_URL_PATTERN.findall(text)
 
     @staticmethod
+    def _frontmatter_scalar(text: str, key: str) -> str:
+        match = re.search(rf"^{re.escape(key)}:\s*['\"]?(.+?)['\"]?\s*$", text, flags=re.MULTILINE)
+        return match.group(1).strip(" '\"") if match else ""
+
+    @staticmethod
+    def _frontmatter_track_names(text: str) -> set[str]:
+        """Read only simple ``tracks: - name:`` YAML used by this profile.
+
+        This is deliberately not a fuzzy title match: an inherited source is
+        accepted only if a directly linked parent release explicitly lists the
+        same track title.  It avoids forcing every album track to duplicate a
+        release URL while keeping the relationship auditable.
+        """
+        return {
+            match.group(1).strip(" '\"")
+            for match in re.finditer(r"^\s+name:\s*['\"]?(.+?)['\"]?\s*$", text, flags=re.MULTILINE)
+        }
+
+    @staticmethod
     def _normalise(value: object) -> str:
         """Make a conservative, formatting-insensitive identity comparison."""
         return re.sub(r"[^\w\u4e00-\u9fff]", "", str(value).casefold())
@@ -196,20 +215,35 @@ class ContentEvidenceTool:
         # array is counted as a traceable source; unlinked records are a bounded
         # research backlog rather than silently trusted site copy.
         generic_collections = ("awards", "biography", "discography", "events")
-        generic_total = generic_sourced = 0
+        generic_total = generic_sourced = inherited_sourced = 0
         for collection in generic_collections:
             paths = list((root / "src" / "content" / collection).glob("*.mdx"))
             generic_total += len(paths)
-            sourced = sum(bool(self._source_urls(path.read_text(encoding="utf-8"))) for path in paths)
+            records = [(path, path.read_text(encoding="utf-8")) for path in paths]
+            # A sourced release page can serve as provenance for its explicitly
+            # listed tracks. Other collections never inherit evidence.
+            sourced_release_tracks: set[str] = set()
+            if collection == "discography":
+                for _, text in records:
+                    if self._source_urls(text):
+                        sourced_release_tracks.update(self._frontmatter_track_names(text))
+            direct = sum(bool(self._source_urls(text)) for _, text in records)
+            inherited = sum(
+                not self._source_urls(text)
+                and self._frontmatter_scalar(text, "title") in sourced_release_tracks
+                for _, text in records
+            ) if collection == "discography" else 0
+            sourced = direct + inherited
             generic_sourced += sourced
+            inherited_sourced += inherited
             if len(paths) - sourced:
-                findings.append({"issue": "factual_collection_missing_provenance", "severity": 2, "collection": collection, "covered": sourced, "total": len(paths)})
+                findings.append({"issue": "factual_collection_missing_provenance", "severity": 2, "collection": collection, "covered": sourced, "total": len(paths), "inherited": inherited})
         manifest_metrics, manifest_findings, manifest_limitations = self._stage_manifest_audit(root, stage_directory)
         findings.extend(manifest_findings)
         return ToolReport(self.name, "available", {
             "public_news": len(public_news), "verified_news": verified, "pending_news": pending, "unsourced_news": unsourced, "evidence_points": points,
             "stages": len(stages), "verified_stages": verified_stages, "pending_stages": pending_stages, "legacy_stages": legacy_stages,
-            "factual_records": generic_total, "factual_records_with_sources": generic_sourced, "factual_records_without_sources": generic_total - generic_sourced,
+            "factual_records": generic_total, "factual_records_with_sources": generic_sourced, "factual_records_with_inherited_sources": inherited_sourced, "factual_records_without_sources": generic_total - generic_sourced,
             **manifest_metrics,
         }, tuple(findings), ("Coverage is not a claim-level truth determination.", *manifest_limitations))
 

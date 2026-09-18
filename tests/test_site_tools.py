@@ -64,3 +64,26 @@ class WebsiteToolchainTest(unittest.TestCase):
             report = WebsiteToolchain().collect(root, "")["content-evidence"]
             self.assertEqual(report.metrics["legacy_stages"], 0)
             self.assertEqual(report.metrics["pending_stages"], 1)
+
+    def test_sourced_release_provides_auditable_provenance_for_listed_track(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            discography = root / "src" / "content" / "discography"
+            discography.mkdir(parents=True)
+            (discography / "release.mdx").write_text(
+                """---
+title: Album
+tracks:
+  - number: 1
+    name: Track A
+platforms:
+  - url: https://music.example/album
+---""",
+                encoding="utf-8",
+            )
+            (discography / "track.mdx").write_text("""---
+title: Track A
+---""", encoding="utf-8")
+            report = WebsiteToolchain().collect(root, "")["content-evidence"]
+            self.assertEqual(report.metrics["factual_records_without_sources"], 0)
+            self.assertEqual(report.metrics["factual_records_with_inherited_sources"], 1)
